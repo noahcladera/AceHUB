@@ -20,7 +20,10 @@ import re
 #############################################
 # CONFIGURATION SETTINGS
 #############################################
-BASE_DATA_DIR = "data"  # Root directory containing video subfolders (e.g., data/video_1, data/video_2, …)
+# Determine the folder containing "data" relative to this script's location.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")  # This will point to acehub/data
+
 FPS = 30  # Frames per second (used to convert seconds to frame indices)
 
 #############################################

@@ -4,30 +4,23 @@
 1Batch_download_and_Convert_Videos.py
 
 This script downloads videos from YouTube using yt-dlp and then converts them to 30 FPS using FFmpeg.
+Each video is saved in its respective folder under the "acehub/data" directory.
 """
 
 import os
 import yt_dlp
 import ffmpeg
 
-#############################################
-# CONFIGURATION & FOLDER SETUP
-#############################################
-# Base folder for all outputs
-BASE_FOLDER = "tennis_clips"
-os.makedirs(BASE_FOLDER, exist_ok=True)
+# Path to the top-level acehub folder
+ACEHUB_FOLDER = "acehub"
 
-# Folder for downloaded videos
-VIDEOS_FOLDER = os.path.join(BASE_FOLDER, "videos")
-os.makedirs(VIDEOS_FOLDER, exist_ok=True)
+# Folder for data inside acehub
+DATA_FOLDER = os.path.join(ACEHUB_FOLDER, "data")
+os.makedirs(DATA_FOLDER, exist_ok=True)
 
-# Folder for converted videos at 30 FPS
-CONVERTED_FOLDER = os.path.join(BASE_FOLDER, "videos_30fps")
-os.makedirs(CONVERTED_FOLDER, exist_ok=True)
-
-# List of YouTube URLs to process (batch download)
+# List of YouTube URLs to process
 youtube_urls = [
-"https://www.youtube.com/watch?v=lgCokC--lyI&t=235s&ab_channel=LoveTennis",
+    "https://www.youtube.com/watch?v=lgCokC--lyI&t=235s&ab_channel=LoveTennis",
     "https://www.youtube.com/watch?v=jRXUK0Jd9ZM&ab_channel=COURTLEVELTENNIS-LiamApilado",
     "https://www.youtube.com/watch?v=928wJjWeVyk&ab_channel=Slow-MoTennis",
     "https://www.youtube.com/watch?v=qkQmT4fXKD8&ab_channel=Slow-MoTennis",
@@ -75,55 +68,71 @@ youtube_urls = [
     "https://www.youtube.com/watch?v=fhn2ANDE4kA&ab_channel=Slow-MoTennis"    # Add more URLs as needed...
 ]
 
-#############################################
-# FUNCTIONS
-#############################################
-def download_video(url, idx):
+FPS = 30  # Desired frame rate for converted videos
+
+def download_video(url, idx, video_folder):
     """
-    Downloads the best available video (MP4) from YouTube by merging the best video and audio streams.
-    Saves the video in VIDEOS_FOLDER with a unique filename.
+    Downloads the best available video from YouTube using yt-dlp.
+    Saves the temporary file as "video_{idx}_temp.mp4" in the provided folder.
     """
+    temp_filename = f"video_{idx}_temp.mp4"
+    outtmpl = os.path.join(video_folder, temp_filename)
     ydl_opts = {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
         "merge_output_format": "mp4",
-        "outtmpl": os.path.join(VIDEOS_FOLDER, f"video_{idx}.%(ext)s"),
+        "outtmpl": outtmpl,
         "noplaylist": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-    print(f"[INFO] Downloaded video_{idx}.mp4")
+    print(f"[INFO] Downloaded temporary video: {outtmpl}")
+    return outtmpl
 
-def convert_video_to_30fps(input_path, output_path):
+def convert_video_to_30fps(input_path, output_path, fps):
     """
-    Converts the input video to 30 FPS using FFmpeg.
-    Re-encodes the video with libx264 and copies the audio.
+    Converts the input video to the specified FPS using FFmpeg.
+    Re-encodes video with libx264 and copies the audio.
     """
     try:
-        # Build the FFmpeg command pipeline:
-        # - Read the input
-        # - Filter to force FPS=30 (using round='up' to round frame counts)
-        # - Re-encode video with libx264 (you can adjust crf/preset for quality/speed trade-off)
-        # - Copy the audio stream without re-encoding
         stream = ffmpeg.input(input_path)
-        stream = stream.filter('fps', fps=30, round='up')
-        stream = ffmpeg.output(stream, output_path, vcodec='libx264', crf=23, preset='fast', acodec='copy')
+        # Force FPS to 'fps'
+        stream = stream.filter('fps', fps=fps, round='up')
+        stream = ffmpeg.output(
+            stream,
+            output_path,
+            vcodec='libx264',
+            crf=23,
+            preset='fast',
+            acodec='copy'
+        )
         ffmpeg.run(stream, quiet=True, overwrite_output=True)
-        print(f"[INFO] Converted to 30FPS: {output_path}")
+        print(f"[INFO] Converted video to {fps} FPS: {output_path}")
     except ffmpeg.Error as e:
         print("Error converting video to 30 FPS:", e)
 
-#############################################
-# MAIN EXECUTION
-#############################################
-if __name__ == "__main__":
+def main():
     print(">>> Starting batch download and conversion of videos...")
     for idx, url in enumerate(youtube_urls, start=1):
         print(f"[INFO] Processing video {idx}: {url}")
-        # Download the video
-        download_video(url, idx)
-        # Define input and output paths
-        input_video = os.path.join(VIDEOS_FOLDER, f"video_{idx}.mp4")
-        output_video = os.path.join(CONVERTED_FOLDER, f"video_{idx}_30fps.mp4")
-        # Convert the video to 30 FPS
-        convert_video_to_30fps(input_video, output_video)
-    print(">>> Batch download and conversion complete. Converted videos saved to:", CONVERTED_FOLDER)
+        # Create a folder for the current video inside acehub/data
+        video_folder = os.path.join(DATA_FOLDER, f"video_{idx}")
+        os.makedirs(video_folder, exist_ok=True)
+
+        # 1) Download the video to a temporary file
+        temp_video_path = download_video(url, idx, video_folder)
+
+        # 2) Define the final output path: video_{idx}.mp4 in the same folder
+        output_video_path = os.path.join(video_folder, f"video_{idx}.mp4")
+
+        # 3) Convert the downloaded video to 30 FPS
+        convert_video_to_30fps(temp_video_path, output_video_path, FPS)
+
+        # 4) Remove the temporary file
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+            print(f"[INFO] Removed temporary file: {temp_video_path}")
+
+    print(">>> Batch download and conversion complete.")
+
+if __name__ == "__main__":
+    main()
