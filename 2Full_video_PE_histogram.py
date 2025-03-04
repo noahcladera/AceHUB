@@ -17,7 +17,7 @@ import mediapipe as mp
 ##############################################################################
 # CONFIGURATION SETTINGS
 ##############################################################################
-VIDEOS_DIR = "tennis_clips/videos"  # Folder containing video_*.mp4
+VIDEOS_DIR = "Test_media/test_videos"  # Folder containing video_*.mp4
 CALCULATE_ANGLES = True            # Set to True to calculate extra joint angles
 
 # Set up MediaPipe Pose (BlazePose Full)

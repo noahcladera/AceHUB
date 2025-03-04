@@ -14,9 +14,9 @@ import cv2
 # CONFIGURATION SETTINGS
 #############################################
 # Folder containing raw CSV files (generated from video pose extraction)
-INPUT_FOLDER = "tennis_clips/videos"    # Contains files like "video_1_data.csv"
+INPUT_FOLDER = "Test_media/test_videos"    # Contains files like "video_1_data.csv"
 # Folder where normalized CSV files will be saved
-OUTPUT_FOLDER = "tennis_clips/normalized"   
+OUTPUT_FOLDER = "Test_media/test_videos"   
 # Ensure the output folder exists
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
