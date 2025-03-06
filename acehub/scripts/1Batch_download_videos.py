@@ -5,6 +5,7 @@
 
 This script downloads videos from YouTube using yt-dlp and then converts them to 30 FPS using FFmpeg.
 Each video is saved in its respective folder under the "acehub/data" directory.
+This version checks if videos already exist before downloading to avoid overwriting.
 """
 
 import os
@@ -44,7 +45,7 @@ youtube_urls = [
     "https://www.youtube.com/watch?v=bNeN2XevGLM&ab_channel=LoveTennis",
     "https://www.youtube.com/watch?v=wFwidKBUt9M&ab_channel=LoveTennis",
     "https://www.youtube.com/watch?v=6WyMFz4ynl4&ab_channel=LoveTennis",
-       # Add more URLs as needed...
+    # ... other URLs ...
 ]
 
 FPS = 30  # Desired frame rate for converted videos
@@ -89,24 +90,51 @@ def convert_video_to_30fps(input_path, output_path, fps):
     except ffmpeg.Error as e:
         print("Error converting video to 30 FPS:", e)
 
+def find_next_available_index():
+    """
+    Finds the next available video index by checking existing folders.
+    Returns the highest existing index + 1.
+    """
+    max_index = 0
+    for item in os.listdir(DATA_FOLDER):
+        if os.path.isdir(os.path.join(DATA_FOLDER, item)) and item.startswith("video_"):
+            try:
+                index = int(item.split("_")[1])
+                max_index = max(max_index, index)
+            except (ValueError, IndexError):
+                pass
+    return max_index + 1
+
 def main():
     print(">>> Starting batch download and conversion of videos...")
-    for idx, url in enumerate(youtube_urls, start=1):
+
+    # Find the next available index to start from
+    start_index = find_next_available_index()
+    print(f"[INFO] Starting from video index {start_index} (based on existing folders)")
+
+    for i, url in enumerate(youtube_urls):
+        idx = start_index + i
         print(f"[INFO] Processing video {idx}: {url}")
+
         # Create a folder for the current video inside acehub/data
         video_folder = os.path.join(DATA_FOLDER, f"video_{idx}")
+        final_video_path = os.path.join(video_folder, f"video_{idx}.mp4")
+
+        # Check if this video already exists
+        if os.path.exists(final_video_path):
+            print(f"[INFO] Video {idx} already exists at {final_video_path}. Skipping.")
+            continue
+
+        # Create the folder if it doesn't exist
         os.makedirs(video_folder, exist_ok=True)
 
         # 1) Download the video to a temporary file
         temp_video_path = download_video(url, idx, video_folder)
 
-        # 2) Define the final output path: video_{idx}.mp4 in the same folder
-        output_video_path = os.path.join(video_folder, f"video_{idx}.mp4")
+        # 2) Convert the downloaded video to 30 FPS
+        convert_video_to_30fps(temp_video_path, final_video_path, FPS)
 
-        # 3) Convert the downloaded video to 30 FPS
-        convert_video_to_30fps(temp_video_path, output_video_path, FPS)
-
-        # 4) Remove the temporary file
+        # 3) Remove the temporary file
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
             print(f"[INFO] Removed temporary file: {temp_video_path}")

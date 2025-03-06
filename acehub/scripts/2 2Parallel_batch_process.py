@@ -8,7 +8,8 @@ For each subfolder (e.g., "video_1") containing an MP4 file,
 it runs MediaPipe Pose frame-by-frame and saves the raw pose data
 (33 landmarks + optional elbow angles) into a CSV file in the same folder.
 
-This version uses multiprocessing to process multiple videos in parallel.
+This version uses multiprocessing to process multiple videos in parallel
+and skips videos that have already been processed.
 """
 
 import os
@@ -28,6 +29,7 @@ BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")  # Adjust as needed
 
 VIDEO_FOLDER_PREFIX = "video_"  # Each video folder is named like "video_1", "video_2", etc.
 CALCULATE_ANGLES = True         # Set to True to calculate elbow angles
+FORCE_REPROCESS = False         # Set to True to reprocess videos even if data files exist
 
 # Number of parallel processes to use (adjust based on your CPU)
 NUM_PROCESSES = min(8, cpu_count())  # Use 8 or the number of CPU cores, whichever is smaller
@@ -95,7 +97,7 @@ def process_video_task(task_data):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"[ERROR] Could not open video file: {video_path}")
-        return
+        return None
 
     print(f"[INFO] Processing {os.path.basename(video_path)} -> {os.path.basename(output_csv)}")
     with open(output_csv, "w", newline="") as csvfile:
@@ -151,6 +153,8 @@ def main():
 
     # Collect all video processing tasks
     tasks = []
+    skipped_videos = []
+
     for folder_name in os.listdir(BASE_DATA_DIR):
         if not folder_name.startswith(VIDEO_FOLDER_PREFIX):
             continue
@@ -167,17 +171,31 @@ def main():
         video_basename = os.path.splitext(video_file)[0]
         # Output CSV saved in the same folder as the video file
         output_csv = os.path.join(video_folder, f"{video_basename}_data.csv")
-        if os.path.exists(output_csv):
-            os.remove(output_csv)
+
+        # Check if the data file already exists
+        if os.path.exists(output_csv) and not FORCE_REPROCESS:
+            print(f"[INFO] Data file already exists for {video_basename}. Skipping.")
+            skipped_videos.append(os.path.basename(video_path))
+            continue
 
         tasks.append((video_path, output_csv))
 
     # Process videos in parallel
     print(f"[INFO] Starting parallel processing with {NUM_PROCESSES} workers")
     print(f"[INFO] Found {len(tasks)} videos to process")
+    print(f"[INFO] Skipped {len(skipped_videos)} videos that already have data files")
+
+    if skipped_videos:
+        print(f"[INFO] Skipped videos: {skipped_videos}")
+
+    if not tasks:
+        print("[INFO] No videos to process. All videos already have data files.")
+        return
 
     with Pool(processes=NUM_PROCESSES) as pool:
         results = pool.map(process_video_task, tasks)
+        # Filter out None results (failed processing)
+        results = [r for r in results if r is not None]
 
     print(f"[INFO] All videos processed successfully")
     print(f"[INFO] Processed videos: {results}")
