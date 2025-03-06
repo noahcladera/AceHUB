@@ -20,9 +20,6 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # List of YouTube URLs to process
 youtube_urls = [
-    "https://www.youtube.com/watch?v=lgCokC--lyI&t=235s&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=jRXUK0Jd9ZM&ab_channel=COURTLEVELTENNIS-LiamApilado",
-    "https://www.youtube.com/watch?v=928wJjWeVyk&ab_channel=Slow-MoTennis",
     "https://www.youtube.com/watch?v=qkQmT4fXKD8&ab_channel=Slow-MoTennis",
     "https://www.youtube.com/watch?v=Paw1e6sIJkM&ab_channel=TennisProTV",
     "https://www.youtube.com/watch?v=MNGIcSHmmSk&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&ab_channel=LoveTennis",
@@ -47,25 +44,7 @@ youtube_urls = [
     "https://www.youtube.com/watch?v=bNeN2XevGLM&ab_channel=LoveTennis",
     "https://www.youtube.com/watch?v=wFwidKBUt9M&ab_channel=LoveTennis",
     "https://www.youtube.com/watch?v=6WyMFz4ynl4&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=SlgMvQQrYhg&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=F8Q4AvYxup0&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=RVhJBhWxFQc&t=306s&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=0edfZQPFeDc&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=AFyPREOG0BM&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=-CXrTTip_Bw&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=MTP99IHemNA&t=155s&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=A-Hcgjz1uow&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=Zam8nGoJA8o&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=1YuShuvbZnM&t=9s&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=zqc9JDC-0_Q&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=FuDJ7crbkBo&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=0tP2pmXd9Gk&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=iQQceybyG-4&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=DeynHaCn-s0&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=qVbDaYs0wT8&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=R4JKzKFNgRU&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=Z_LU2q1CROA&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=fhn2ANDE4kA&ab_channel=Slow-MoTennis"    # Add more URLs as needed...
+       # Add more URLs as needed...
 ]
 
 FPS = 30  # Desired frame rate for converted videos

@@ -73,7 +73,7 @@ YOUTUBE_URLS = [
 FPS_TARGET = 30
 
 # Number of worker processes for parallel downloads/encodes
-MAX_WORKERS = 4
+MAX_WORKERS = 8
 
 # Set to True to try using NVIDIA hardware encoder (requires a supported GPU, drivers, etc.)
 USE_NVIDIA_HARDWARE = False  # Set to False if you want CPU-based x264
