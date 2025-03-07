@@ -37,6 +37,7 @@ BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
 TEMPORAL_WINDOW = 30   # Number of frames for sliding window
 FPS = 30               # Frames per second of the video
 VISIBILITY_THRESHOLD = 0.5  # Only consider landmarks with visibility > threshold
+FORCE_REPROCESS = False  # Set to True to reprocess videos even if normalized files exist
 
 #############################################
 # SPATIAL NORMALIZATION FUNCTIONS
@@ -231,6 +232,10 @@ def process_all_csv_files(base_folder, fps=30):
         print(f"[ERROR] Data folder not found: {base_folder}")
         return
 
+    processed_count = 0
+    skipped_count = 0
+    skipped_folders = []
+
     for folder_name in os.listdir(base_folder):
         folder_path = os.path.join(base_folder, folder_name)
         if not os.path.isdir(folder_path):
@@ -248,15 +253,28 @@ def process_all_csv_files(base_folder, fps=30):
             continue
 
         output_csv = data_csv.replace("_data.csv", "_normalized.csv")
-        # Overwrite if exists
-        if os.path.exists(output_csv):
-            os.remove(output_csv)
 
+        # Check if normalized file already exists
+        if os.path.exists(output_csv) and not FORCE_REPROCESS:
+            print(f"[INFO] Normalized file already exists for {folder_name}. Skipping.")
+            skipped_count += 1
+            skipped_folders.append(folder_name)
+            continue
+
+        print(f"[INFO] Processing {folder_name}...")
         process_csv(data_csv, output_csv, fps=fps)
+        processed_count += 1
+
+    print(f"\n[SUMMARY] Processed {processed_count} folders, skipped {skipped_count} folders.")
+    if skipped_count > 0:
+        print(f"[SUMMARY] Skipped folders: {', '.join(skipped_folders)}")
 
 
 #############################################
 # MAIN EXECUTION
 #############################################
 if __name__ == "__main__":
+    print(f"[INFO] Starting normalization process...")
+    print(f"[INFO] Data directory: {BASE_DATA_DIR}")
+    print(f"[INFO] Force reprocess: {FORCE_REPROCESS}")
     process_all_csv_files(BASE_DATA_DIR, fps=FPS)
