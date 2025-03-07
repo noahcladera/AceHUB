@@ -26,8 +26,8 @@ import ffmpeg
 FPS = 30  # Frames per second of your videos
 
 # Root folder structure: "acehub/data/video_1", etc.
-ACEHUB_FOLDER = "acehub"
-DATA_FOLDER = os.path.join(ACEHUB_FOLDER, "data")
+ACEHUB_FOLDER = "tennis-stroke-detection"
+DATA_FOLDER = os.path.join("tennis-stroke-detection", "data")
 
 
 def load_labels(csv_path):

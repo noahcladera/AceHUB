@@ -22,7 +22,7 @@ from multiprocessing import Pool, cpu_count
 #############################################
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # The raw videos are assumed in data/raw, and we keep CSVs in the same folder or a subfolder
-BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "..", "data", "raw")
+BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "..", "data", "interim")
 
 VIDEO_FOLDER_PREFIX = "video_"
 CALCULATE_ANGLES = True

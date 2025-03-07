@@ -276,7 +276,7 @@ def process_all_csv_files(base_folder, fps=30):
             print(f"[WARNING] No '_data.csv' found in {folder_path}. Skipping.")
             continue
 
-        output_csv = data_csv.replace("_data.csv", "_normalized.csv")
+        output_csv = data_csv.replace("data/interim", "data/processed").replace("_data.csv", "_normalized.csv")
 
         # Skip if already exists (unless FORCE_REPROCESS = True)
         if os.path.exists(output_csv) and not FORCE_REPROCESS:
