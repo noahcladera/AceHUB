@@ -1,3 +1,4 @@
 # Ignore video and large data files
 *.mp4
 *.csv
+*.llc
