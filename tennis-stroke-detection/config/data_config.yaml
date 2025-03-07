@@ -1,0 +1,20 @@
+# data_config.yaml
+# Defines where your raw, interim, and processed data live, plus optional dataset parameters.
+
+data_paths:
+  raw_data_dir: "tennis-stroke-detection/data/raw"
+  interim_data_dir: "tennis-stroke-detection/data/interim"
+  processed_data_dir: "tennis-stroke-detection/data/processed"
+
+# If you store label definitions or manifest files:
+label_definitions: "tennis-stroke-detection/data/label_definitions.json"
+
+# For dataset splits:
+train_split: 0.8
+val_split: 0.1
+test_split: 0.1
+
+# Any placeholder for extra
+batch_size: 16
+shuffle: true
+num_workers: 4

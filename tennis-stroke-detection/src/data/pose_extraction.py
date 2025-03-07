@@ -1,15 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-2Full_video_PE_histogram.py
+pose_extraction.py
 
-This script processes every video folder in the "data" directory.
-For each subfolder (e.g., "video_1") containing an MP4 file,
-it runs MediaPipe Pose frame-by-frame and saves the raw pose data
-(33 landmarks + optional elbow angles) into a CSV file in the same folder.
-
-This version uses multiprocessing to process multiple videos in parallel
-and skips videos that have already been processed.
+Processes each raw video in "tennis-stroke-detection/data/raw" by running
+MediaPipe Pose frame-by-frame to produce a CSV of raw pose data.
+This version supports multiprocessing and skips already-processed videos
+unless FORCE_REPROCESS is set to True.
 """
 
 import os
@@ -23,25 +20,24 @@ from multiprocessing import Pool, cpu_count
 #############################################
 # CONFIGURATION SETTINGS
 #############################################
-# Determine the script directory and set BASE_DATA_DIR relative to it.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")  # Adjust as needed
+# The raw videos are assumed in data/raw, and we keep CSVs in the same folder or a subfolder
+BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "..", "data", "raw")
 
-VIDEO_FOLDER_PREFIX = "video_"  # Each video folder is named like "video_1", "video_2", etc.
-CALCULATE_ANGLES = True         # Set to True to calculate elbow angles
-FORCE_REPROCESS = False         # Set to True to reprocess videos even if data files exist
+VIDEO_FOLDER_PREFIX = "video_"
+CALCULATE_ANGLES = True
+FORCE_REPROCESS = False
 
-# Number of parallel processes to use (adjust based on your CPU)
-NUM_PROCESSES = min(8, cpu_count())  # Use 8 or the number of CPU cores, whichever is smaller
+NUM_PROCESSES = min(8, cpu_count())  # or adjust as desired
 
 #############################################
 # HELPER FUNCTIONS
 #############################################
 def find_video_file(folder):
     """
-    Searches for an MP4 file in the given folder.
-    1) Looks for a file that exactly matches the folder name (e.g., "video_1.mp4").
-    2) Otherwise returns the first file ending with .mp4.
+    Searches for an MP4 file in the given folder:
+      1) Checking for a file that exactly matches the folder name (e.g., "video_1.mp4").
+      2) Otherwise returns the first .mp4 file found.
     """
     folder_name = os.path.basename(folder)
     expected_filename = f"{folder_name}.mp4"
@@ -55,14 +51,14 @@ def find_video_file(folder):
 
 def get_video_number(filename):
     """
-    Extracts a numeric index from a filename like 'video_10.mp4' => 10 for sorting.
+    Extracts an integer from names like 'video_10.mp4' => 10 (for sorting).
     """
     match = re.search(r'video_(\d+)\.mp4', filename)
     return int(match.group(1)) if match else 999999
 
 def calculate_angle(ax, ay, bx, by, cx, cy):
     """
-    Calculate the angle at point B formed by A->B->C in 2D space.
+    Calculate angle at point B formed by A->B->C in 2D space.
     """
     BAx = ax - bx
     BAy = ay - by
@@ -80,15 +76,14 @@ def calculate_angle(ax, ay, bx, by, cx, cy):
 def process_video_task(task_data):
     """
     Worker function for parallel processing.
-    Takes a tuple of (video_path, output_csv) and processes the video.
+    Each task_data is (video_path, output_csv).
     """
     video_path, output_csv = task_data
 
-    # Create a new MediaPipe Pose instance for each process
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(
         static_image_mode=False,
-        model_complexity=2,  # Use 2 for full-body (BlazePose Full)
+        model_complexity=2,
         smooth_landmarks=True,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
@@ -99,11 +94,9 @@ def process_video_task(task_data):
         print(f"[ERROR] Could not open video file: {video_path}")
         return None
 
-    print(f"[INFO] Processing {os.path.basename(video_path)} -> {os.path.basename(output_csv)}")
+    print(f"[INFO] Processing: {os.path.basename(video_path)} -> {os.path.basename(output_csv)}")
     with open(output_csv, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-
-        # Build header: frame_index + 33 landmarks (x,y,z,vis) each + optional angles
         header = ["frame_index"]
         for i in range(33):
             header += [f"lm_{i}_x", f"lm_{i}_y", f"lm_{i}_z", f"lm_{i}_vis"]
@@ -117,10 +110,8 @@ def process_video_task(task_data):
             if not ret:
                 break
 
-            # Convert frame to RGB for MediaPipe
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = pose.process(frame_rgb)
-
             if results.pose_landmarks:
                 row = [frame_index]
                 landmarks = results.pose_landmarks.landmark
@@ -140,7 +131,7 @@ def process_video_task(task_data):
             frame_index += 1
 
     cap.release()
-    print(f"[INFO] Done processing {os.path.basename(video_path)}")
+    print(f"[INFO] Finished: {os.path.basename(video_path)}")
     return os.path.basename(video_path)
 
 #############################################
@@ -148,10 +139,9 @@ def process_video_task(task_data):
 #############################################
 def main():
     if not os.path.isdir(BASE_DATA_DIR):
-        print(f"[ERROR] Base data directory not found: {BASE_DATA_DIR}")
+        print(f"[ERROR] Data folder not found: {BASE_DATA_DIR}")
         return
 
-    # Collect all video processing tasks
     tasks = []
     skipped_videos = []
 
@@ -169,35 +159,27 @@ def main():
 
         video_path = os.path.join(video_folder, video_file)
         video_basename = os.path.splitext(video_file)[0]
-        # Output CSV saved in the same folder as the video file
         output_csv = os.path.join(video_folder, f"{video_basename}_data.csv")
 
-        # Check if the data file already exists
         if os.path.exists(output_csv) and not FORCE_REPROCESS:
-            print(f"[INFO] Data file already exists for {video_basename}. Skipping.")
+            print(f"[INFO] Already processed: {video_basename}. Skipping.")
             skipped_videos.append(os.path.basename(video_path))
             continue
 
         tasks.append((video_path, output_csv))
 
-    # Process videos in parallel
     print(f"[INFO] Starting parallel processing with {NUM_PROCESSES} workers")
     print(f"[INFO] Found {len(tasks)} videos to process")
-    print(f"[INFO] Skipped {len(skipped_videos)} videos that already have data files")
-
-    if skipped_videos:
-        print(f"[INFO] Skipped videos: {skipped_videos}")
+    print(f"[INFO] Skipped {len(skipped_videos)} videos with existing data.csv")
 
     if not tasks:
-        print("[INFO] No videos to process. All videos already have data files.")
+        print("[INFO] No videos to process.")
         return
 
     with Pool(processes=NUM_PROCESSES) as pool:
         results = pool.map(process_video_task, tasks)
-        # Filter out None results (failed processing)
         results = [r for r in results if r is not None]
 
-    print(f"[INFO] All videos processed successfully")
     print(f"[INFO] Processed videos: {results}")
 
 if __name__ == "__main__":

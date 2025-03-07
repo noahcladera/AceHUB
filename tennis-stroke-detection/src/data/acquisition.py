@@ -1,54 +1,30 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-1Batch_download_and_Convert_Videos.py
+acquisition.py
 
-This script downloads videos from YouTube using yt-dlp and then converts them to 30 FPS using FFmpeg.
-Each video is saved in its respective folder under the "acehub/data" directory.
-This version checks if videos already exist before downloading to avoid overwriting.
+This script downloads videos from YouTube using yt-dlp and then converts them
+to 30 FPS using FFmpeg. Each video is saved in a subfolder under
+"tennis-stroke-detection/data/raw". It checks if videos already exist
+before downloading, to avoid overwriting existing work.
 """
 
 import os
 import yt_dlp
 import ffmpeg
 
-# Path to the top-level acehub folder
-ACEHUB_FOLDER = "acehub"
-
-# Folder for data inside acehub
-DATA_FOLDER = os.path.join(ACEHUB_FOLDER, "data")
+# Path setup: we assume this script lives in tennis-stroke-detection/src/data/
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FOLDER = os.path.join(SCRIPT_DIR, "..", "..", "data", "raw")
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # List of YouTube URLs to process
 youtube_urls = [
-    "https://www.youtube.com/watch?v=qkQmT4fXKD8&ab_channel=Slow-MoTennis",
-    "https://www.youtube.com/watch?v=Paw1e6sIJkM&ab_channel=TennisProTV",
-    "https://www.youtube.com/watch?v=MNGIcSHmmSk&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=Q7Ta9DbHKjk&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=2&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=e9qA6cXg_84&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=3&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=Nw_2I2ksX3U&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=4&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=L38Rf-DW3a4&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=6&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=EFY460oquXw&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=7&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=RDl2Kz0gd18&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=8&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=SLi2qGH418g&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=10&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=5g3PjMKxVgs&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=13&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=-DskBNOZCfo&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=15&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=AyMv2ugNc6Y&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=18&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=F6tY1LFfKuU&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=19&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=yLqmpHz2O7E&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=20&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=TBHfZkPLb30&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=21&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=20dU_JL_ME8&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=25&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=ETW2kCBcdH4&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=27&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=tqPe-IdUUa8&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=30&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=ZiigS7RtEXI&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=32&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=OvGakC-KQZs&list=PL5z1bgiPPar4j-qIDOv7VJEB1vtY1y8yP&index=33&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=bNeN2XevGLM&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=wFwidKBUt9M&ab_channel=LoveTennis",
-    "https://www.youtube.com/watch?v=6WyMFz4ynl4&ab_channel=LoveTennis",
-    # ... other URLs ...
+    # ... your YouTube URLs ...
 ]
 
 FPS = 30  # Desired frame rate for converted videos
+
 
 def download_video(url, idx, video_folder):
     """
@@ -75,7 +51,6 @@ def convert_video_to_30fps(input_path, output_path, fps):
     """
     try:
         stream = ffmpeg.input(input_path)
-        # Force FPS to 'fps'
         stream = stream.filter('fps', fps=fps, round='up')
         stream = ffmpeg.output(
             stream,
@@ -92,8 +67,8 @@ def convert_video_to_30fps(input_path, output_path, fps):
 
 def find_next_available_index():
     """
-    Finds the next available video index by checking existing folders.
-    Returns the highest existing index + 1.
+    Finds the next available video index by checking existing 'video_X' folders
+    in the raw data directory. Returns the highest existing index + 1.
     """
     max_index = 0
     for item in os.listdir(DATA_FOLDER):
@@ -108,7 +83,6 @@ def find_next_available_index():
 def main():
     print(">>> Starting batch download and conversion of videos...")
 
-    # Find the next available index to start from
     start_index = find_next_available_index()
     print(f"[INFO] Starting from video index {start_index} (based on existing folders)")
 
@@ -116,19 +90,18 @@ def main():
         idx = start_index + i
         print(f"[INFO] Processing video {idx}: {url}")
 
-        # Create a folder for the current video inside acehub/data
+        # Create a subfolder for this video under data/raw
         video_folder = os.path.join(DATA_FOLDER, f"video_{idx}")
         final_video_path = os.path.join(video_folder, f"video_{idx}.mp4")
 
-        # Check if this video already exists
+        # If already present, skip
         if os.path.exists(final_video_path):
             print(f"[INFO] Video {idx} already exists at {final_video_path}. Skipping.")
             continue
 
-        # Create the folder if it doesn't exist
         os.makedirs(video_folder, exist_ok=True)
 
-        # 1) Download the video to a temporary file
+        # 1) Download the video
         temp_video_path = download_video(url, idx, video_folder)
 
         # 2) Convert the downloaded video to 30 FPS

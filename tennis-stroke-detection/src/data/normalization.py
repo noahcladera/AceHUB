@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-3Full_Video_Normalization.py
+normalization.py
 
-This script processes each video folder in the "data" directory (e.g. "video_1", "video_2", etc.).
-For each subfolder that contains a raw pose CSV (named like "video_1_data.csv"),
-it applies spatial normalization and temporal smoothing, then saves the result as
-"video_1_normalized.csv" in the same folder.
+Processes each video folder in the "tennis-stroke-detection/data/interim"
+directory. For each subfolder containing a raw pose CSV (named like
+"video_1_data.csv"), it applies spatial normalization and temporal smoothing,
+then saves the result as "video_1_normalized.csv" in the same folder.
 
 Columns added:
   norm_hip_x, norm_hip_y, court_x, court_y, torso_length, swing_phase
 
 Usage:
-    python 3Full_Video_Normalization.py
+    python normalization.py
 """
 
 import os
@@ -23,16 +23,14 @@ import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation
 from scipy.signal import savgol_filter
-from dtaidistance import dtw
-import cv2
+from dtaidistance import dtw  # Remove if not used
+import cv2  # Remove if not used
 
 #############################################
 # CONFIGURATION SETTINGS
 #############################################
-
-# We'll determine the path to the 'data' folder based on this script's location.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
+BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "..", "data", "interim")
 
 TEMPORAL_WINDOW = 30   # Number of frames for sliding window
 FPS = 30               # Frames per second of the video
@@ -47,7 +45,14 @@ def normalize_pose(row):
     """
     Converts a CSV row (raw pose data) into normalized pose data.
     Expects the row to contain: frame_index followed by 33*4 landmark values.
-    Returns a dict with normalized landmarks and additional info.
+    Returns a dict with normalized landmarks and additional info:
+      {
+        'normalized_landmarks': dict of idx -> [x, y, z] (normalized),
+        'hip_center': np.array,
+        'torso_length': float,
+        'body_rotation': nested list (2x2),
+        'court_position': dict with 'court_x', 'court_y'
+      }
     """
     # Build list of 33 landmarks as numpy arrays
     landmarks = []
@@ -90,7 +95,7 @@ def normalize_pose(row):
 
         normalized[idx] = [scaled[0], scaled[1], norm_z]
 
-    # Dummy court normalization
+    # Example court normalization
     court_pos = normalize_to_court(hip_center)
 
     return {
@@ -102,7 +107,10 @@ def normalize_pose(row):
     }
 
 def normalize_to_court(hip_center):
-    """Dummy function to represent court alignment."""
+    """
+    Dummy function to represent some form of court alignment or transform.
+    Modify or remove as needed.
+    """
     return {
         'court_x': hip_center[0] * 1.5,
         'court_y': hip_center[1] * 0.8
@@ -113,19 +121,31 @@ def normalize_to_court(hip_center):
 #############################################
 
 def calculate_derivative(data, fps):
-    """Compute derivative (velocity/accel) by np.gradient, scaled by fps."""
+    """
+    Compute a derivative (velocity or acceleration) by np.gradient, scaled by fps.
+    data: np.array of shape (frames, features)
+    fps:  integer
+    """
     return np.gradient(data, axis=0) * fps
 
 def smooth_landmark_trajectories(frames, window=15, order=3):
-    """Savitzky–Golay filter to smooth pose trajectories over time."""
+    """
+    Uses a Savitzky-Golay filter to smooth pose trajectories over time.
+    frames: np.array of shape (frames, features)
+    window: smoothing window size
+    order:  polynomial order
+    """
     return savgol_filter(frames, window_length=window, polyorder=order, axis=0)
 
 def process_temporal_features(frames, fps=30):
     """
-    Takes a list of flattened frames, smooths them, then calculates velocity and acceleration.
-    Returns a dict with keys 'positions', 'velocity', 'acceleration'.
+    Takes a list of flattened frames (shape: n_frames x 99 if 33 landmarks x 3 coords).
+    1) Smooth them with Savitzky-Golay
+    2) Calculate velocity (first derivative)
+    3) Calculate acceleration (second derivative)
+    Returns a dict with keys: 'positions', 'velocity', 'acceleration'
     """
-    frames = np.array(frames)
+    frames = np.array(frames)  # shape => (num_frames, features)
     smoothed = smooth_landmark_trajectories(frames)
     velocity = calculate_derivative(smoothed, fps)
     acceleration = calculate_derivative(velocity, fps)
@@ -141,13 +161,15 @@ def process_temporal_features(frames, fps=30):
 
 def detect_swing_phase(norm_info, temporal):
     """
-    Example: uses vertical velocity of landmark 16 (right wrist) to classify stroke phases.
+    Example approach: uses the vertical velocity of landmark 16 (right wrist)
+    to classify stroke phases ("backswing/forward_swing/neutral").
     """
     if temporal is None:
         return 'neutral'
     try:
         vel_last = temporal['velocity'][-1]
-        # landmark 16 => flatten index = 16*3 => x => +1 => y => so y is (16*3)+1
+        # landmark 16 => indices (16*3):(16*3+3) => [48, 49, 50] if you flatten x,y,z
+        # y is index = 49 (48+1)
         idx_y = (16 * 3) + 1
         vy = vel_last[idx_y]
         if vy > 0.5:
@@ -159,12 +181,12 @@ def detect_swing_phase(norm_info, temporal):
     return 'neutral'
 
 #############################################
-# FLATTENING & PROCESSING
+# FLATTENING & CSV PROCESS
 #############################################
 
 def flatten_normalized_landmarks(normalized_landmarks):
     """
-    Flatten from a dict {idx -> [x, y, z]} to a single list of length 33*3.
+    Flatten from a dict {idx -> [x, y, z]} to a list of length 33*3 = 99.
     """
     flat = []
     for i in range(33):
@@ -175,7 +197,7 @@ def flatten_normalized_landmarks(normalized_landmarks):
 def process_csv(input_csv, output_csv, fps=30):
     """
     Reads the raw pose CSV, normalizes each frame, and appends columns:
-      norm_hip_x, norm_hip_y, court_x, court_y, torso_length, swing_phase
+        norm_hip_x, norm_hip_y, court_x, court_y, torso_length, swing_phase
     """
     with open(input_csv, 'r') as infile:
         reader = csv.reader(infile)
@@ -188,34 +210,36 @@ def process_csv(input_csv, output_csv, fps=30):
 
     for row in rows:
         norm_info = normalize_pose(row)
-        # Flatten and store in buffer for temporal smoothing
+        # Flatten and store in a sliding window
         flat_frame = flatten_normalized_landmarks(norm_info['normalized_landmarks'])
         frame_buffer.append(flat_frame)
 
+        # Once we have TEMPORAL_WINDOW frames in the buffer, compute temporal features
         if len(frame_buffer) >= TEMPORAL_WINDOW:
             temporal_features = process_temporal_features(frame_buffer, fps=fps)
-            # Slide the window
             frame_buffer.pop(0)
 
-        # Example "swing phase" detection
+        # Simple example: detect "swing phase" from the last frame's velocity
         phase = detect_swing_phase(norm_info, temporal_features)
         hip_center = norm_info['hip_center']
         court_pos = norm_info['court_position']
         torso_length = norm_info['torso_length']
 
-        # Extra columns
+        # Additional columns to write
         extra = [hip_center[0], hip_center[1],
                  court_pos['court_x'], court_pos['court_y'],
                  torso_length, phase]
 
         output_data.append(row + [str(e) for e in extra])
 
+    # Build a new header
     new_header = original_header + [
         'norm_hip_x', 'norm_hip_y',
         'court_x', 'court_y',
         'torso_length', 'swing_phase'
     ]
 
+    # Write result to CSV
     with open(output_csv, 'w', newline='') as outfile:
         writer = csv.writer(outfile)
         writer.writerow(new_header)
@@ -225,8 +249,8 @@ def process_csv(input_csv, output_csv, fps=30):
 
 def process_all_csv_files(base_folder, fps=30):
     """
-    For each subfolder in base_folder (e.g. data/video_1/),
-    find a file ending with "_data.csv", produce "_normalized.csv".
+    For each subfolder in base_folder (e.g. data/interim/video_1/), find
+    a file ending with "_data.csv" and produce "_normalized.csv".
     """
     if not os.path.isdir(base_folder):
         print(f"[ERROR] Data folder not found: {base_folder}")
@@ -254,7 +278,7 @@ def process_all_csv_files(base_folder, fps=30):
 
         output_csv = data_csv.replace("_data.csv", "_normalized.csv")
 
-        # Check if normalized file already exists
+        # Skip if already exists (unless FORCE_REPROCESS = True)
         if os.path.exists(output_csv) and not FORCE_REPROCESS:
             print(f"[INFO] Normalized file already exists for {folder_name}. Skipping.")
             skipped_count += 1
@@ -269,12 +293,15 @@ def process_all_csv_files(base_folder, fps=30):
     if skipped_count > 0:
         print(f"[SUMMARY] Skipped folders: {', '.join(skipped_folders)}")
 
-
 #############################################
 # MAIN EXECUTION
 #############################################
-if __name__ == "__main__":
+
+def main():
     print(f"[INFO] Starting normalization process...")
     print(f"[INFO] Data directory: {BASE_DATA_DIR}")
     print(f"[INFO] Force reprocess: {FORCE_REPROCESS}")
     process_all_csv_files(BASE_DATA_DIR, fps=FPS)
+
+if __name__ == "__main__":
+    main()

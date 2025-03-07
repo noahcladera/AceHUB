@@ -1,0 +1,31 @@
+# pipeline_config.yaml
+# High-level instructions describing which steps to run in your ML pipeline.
+
+pipeline:
+  - step: "download_videos"
+    script: "src/data/acquisition.py"
+    description: "Download and convert videos to a uniform FPS."
+
+  - step: "pose_extraction"
+    script: "src/data/pose_extraction.py"
+    description: "Extract raw pose landmarks from videos using MediaPipe."
+
+  - step: "normalization"
+    script: "src/data/normalization.py"
+    description: "Normalize pose data (spatial & temporal)."
+
+  - step: "feature_engineering"
+    script: "src/data/feature_engineering.py"
+    description: "Create labeled CSV files from normalized CSV & manual LLC segments."
+
+  - step: "training"
+    script: "src/training/trainer.py"
+    description: "Train your stroke detection model using the resulting dataset."
+
+  - step: "inference"
+    script: "src/inference/predictor.py"
+    description: "Run inference on new videos or data."
+
+  - step: "clip_generation"
+    script: "src/inference/clip_generator.py"
+    description: "Create short clips of identified strokes from original videos."
