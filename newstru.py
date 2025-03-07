@@ -1,130 +1,40 @@
 import os
-import pathlib
+import shutil
 
-def create_structure():
-    # Define the root directory name
-    root_dir = "tennis-stroke-detection"
-    
-    # Define the structure as nested dictionaries
-    # Empty string means it's a directory, otherwise it's a file with that content
-    structure = {
-        "config": {
-            "data_config.yaml": "",
-            "model_config.yaml": "",
-            "pipeline_config.yaml": ""
-        },
-        "data": {
-            "raw": {},
-            "interim": {
-                "pose_data": {},
-                "normalized": {}
-            },
-            "processed": {
-                "features": {},
-                "labels": {}
-            },
-            "external": {}
-        },
-        "models": {
-            "base.py": "",
-            "sequence": {
-                "lstm.py": "",
-                "transformer.py": ""
-            },
-            "feature_extractors": {
-                "pose_encoder.py": ""
-            },
-            "ensemble": {
-                "stacking.py": ""
-            }
-        },
-        "src": {
-            "data": {
-                "acquisition.py": "",
-                "pose_extraction.py": "",
-                "normalization.py": "",
-                "feature_engineering.py": "",
-                "dataset.py": ""
-            },
-            "training": {
-                "trainer.py": "",
-                "metrics.py": "",
-                "callbacks.py": ""
-            },
-            "inference": {
-                "predictor.py": "",
-                "clip_generator.py": ""
-            },
-            "visualization": {
-                "pose_visualizer.py": "",
-                "results_visualizer.py": ""
-            }
-        },
-        "notebooks": {
-            "exploratory": {},
-            "modeling": {},
-            "evaluation": {}
-        },
-        "tests": {
-            "unit": {},
-            "integration": {},
-            "fixtures": {}
-        },
-        "experiments": {
-            "runs": {},
-            "artifacts": {}
-        },
-        "abilities": {
-            "manual_labeling_ability.py": "",
-            "data_validator.py": "",
-            "model_converter.py": ""
-        },
-        "scripts": {
-            "legacy": {}
-        },
-        "docs": {
-            "api": {},
-            "data_pipeline.md": "",
-            "model_architecture.md": ""
-        }
-    }
-    
-    # Root level files
-    root_files = {
-        ".env.example": "",
-        ".gitignore": "",
-        "pyproject.toml": "",
-        "setup.py": "",
-        "requirements.txt": "",
-        "requirements-prod.txt": "",
-        "Makefile": "",
-        "README.md": "# Tennis Stroke Detection\n\nAI-powered tennis stroke detection and analysis."
+def copy_script(src_file, dst_file):
+    """
+    Copies src_file to dst_file, creating directories for dst_file if needed.
+    """
+    os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+    shutil.copy2(src_file, dst_file)
+    print(f"Copied: {src_file} -> {dst_file}")
+
+def main():
+    # Where your old scripts currently reside
+    old_scripts_path = "acehub-old/scripts"
+    # Where your new structured project resides
+    new_project_path = "tennis-stroke-detection"
+
+    # Map each old script to its new target path in the new structure
+    file_map = {
+        # old script name -> new location (under "src/data" or "src/inference", etc.)
+        "1Batch_download_videos.py": os.path.join(new_project_path, "src", "data", "acquisition.py"),
+        "2 2Parallel_batch_process.py": os.path.join(new_project_path, "src", "data", "pose_extraction.py"),
+        "3Full_Video_Normalization.py": os.path.join(new_project_path, "src", "data", "normalization.py"),
+        "4Create_Frame_Labels.py": os.path.join(new_project_path, "src", "data", "feature_engineering.py"),
+        "5Create_clips_from_cuts.py": os.path.join(new_project_path, "src", "inference", "clip_generator.py")
     }
 
-    def create_nested_structure(base_path, structure):
-        for name, content in structure.items():
-            path = os.path.join(base_path, name)
-            if isinstance(content, dict):
-                # It's a directory
-                os.makedirs(path, exist_ok=True)
-                create_nested_structure(path, content)
-            else:
-                # It's a file
-                with open(path, 'w') as f:
-                    f.write(content)
+    # Copy each script from old to new location
+    for old_script, new_location in file_map.items():
+        src_file = os.path.join(old_scripts_path, old_script)
+        if not os.path.isfile(src_file):
+            print(f"[ERROR] Could not find source script: {src_file}")
+            continue
 
-    # Create the root directory
-    os.makedirs(root_dir, exist_ok=True)
-    
-    # Create the nested structure
-    create_nested_structure(root_dir, structure)
-    
-    # Create root level files
-    for filename, content in root_files.items():
-        with open(os.path.join(root_dir, filename), 'w') as f:
-            f.write(content)
+        copy_script(src_file, new_location)
 
-    print(f"Project structure created successfully in '{root_dir}' directory!")
+    print("\nScripts migrated successfully!")
 
 if __name__ == "__main__":
-    create_structure()
+    main()
