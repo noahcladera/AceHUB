@@ -1,3 +1,150 @@
 # Tennis Stroke Detection
 
-AI-powered tennis stroke detection and analysis.
+Tennis Stroke Detection is an AI-powered pipeline that processes tennis match videos to detect, analyze, and visualize tennis strokes. Leveraging computer vision and deep learning techniques, the system extracts pose data from raw videos, normalizes and processes it, and then uses machine learning models to classify stroke sequences. It also includes utilities for clip generation and visualization of the results.
+
+## Table of Contents
+
+1. Overview  
+2. Features  
+3. Directory Structure  
+4. Installation  
+5. Usage  
+6. Configuration  
+7. Contributing  
+8. License
+
+## Overview
+
+Tennis Stroke Detection is a modular project that implements a complete pipeline for analyzing tennis strokes from video data. The pipeline comprises the following stages:
+
+- **Raw Video Acquisition:** Download and convert raw tennis videos to a uniform FPS format.
+- **Pose Extraction:** Use MediaPipe to extract frame-by-frame human pose landmarks.
+- **Normalization:** Apply spatial and temporal normalization to the extracted pose data.
+- **Feature Engineering:** Merge manual stroke segmentation (LLC files) with normalized data to generate labels.
+- **Model Training:** Train deep learning architectures (LSTM or Transformer-based) to detect stroke patterns.
+- **Inference & Clipping:** Process new videos to detect strokes and create clips highlighting them.
+- **Visualization:** Visualize pose landmarks and prediction results for further analysis.
+
+## Features
+
+- **Automated Video Processing:** Download and preprocess tennis videos using yt-dlp and FFmpeg.
+- **Pose Extraction:** Extract pose landmarks with MediaPipe for further processing.
+- **Data Normalization:** Robust normalization (spatial & temporal) to ensure consistency across frames.
+- **Manual Label Integration:** Merge labels from LLC files with CSV data for supervised learning.
+- **Flexible Model Architectures:** Options for both LSTM and Transformer based sequences.
+- **Video Clipping:** Automatically generate video clips for identified stroke segments.
+- **Extensible Codebase:** Clean separation between data processing, model training, inference, and visualization.
+
+## Directory Structure
+
+noahcladera-acehub/
+└── tennis-stroke-detection/
+├── README.md # This file
+├── lkxc.py # Pipeline path update script
+├── Makefile # Build and execution commands
+├── pyproject.toml # Project configuration
+├── requirements-prod.txt # Production dependencies
+├── requirements.txt # Development dependencies
+├── setup.py # Setup and installation script
+├── .env.example # Example environment configuration
+├── .gitignore # Git ignore file
+├── abilities/ # Utility submodules (data validator, labeling, model conversion)
+├── config/ # YAML configuration files (data, model, pipeline)
+├── docs/ # Documentation (data pipeline, model architecture)
+├── models/ # Model implementations (base, ensemble, feature extractors, sequence)
+└── src/ # Source code for data handling, inference, training, and visualization
+
+
+## Installation
+
+1. **Clone the repository:**
+
+git clone <repository_url>
+cd noahcladera-acehub/tennis-stroke-detection
+
+
+2. **Set up a virtual environment (optional but recommended):**
+
+python -m venv venv
+source venv/bin/activate # On Windows use: venv\Scripts\activate
+
+
+3. **Install the required dependencies:**
+
+For development:
+pip install -r requirements.txt
+
+For production:
+pip install -r requirements-prod.txt
+
+
+## Usage
+
+The project is broken down into several steps which can be run independently:
+
+- **Update the pipeline paths:**  
+This script applies the recommended path fixes for data flow and module references.
+python lkxc.py
+
+
+- **Download and process videos:**  
+Download raw videos and convert them to 30 FPS using:
+python src/data/acquisition.py
+
+
+- **Extract pose data:**  
+Run pose extraction on videos with MediaPipe:
+python src/data/pose_extraction.py
+
+
+- **Normalize pose data:**  
+Normalize the pose landmarks with spatial and temporal functions:
+python src/data/normalization.py
+
+
+- **Feature engineering & labeling:**  
+Merge manual label data (LLC files) with normalized CSV data:
+python src/data/feature_engineering.py
+
+
+- **Train the model:**  
+Train your stroke detection model using the prepared dataset:
+python src/training/trainer.py
+
+
+- **Inference:**  
+Run inference on new videos:
+python src/inference/predictor.py
+
+
+- **Clip generation:**  
+Generate video clips based on detected stroke segments:
+python src/inference/clip_generator.py
+
+
+## Configuration
+
+Configuration parameters are managed through YAML files located in the `config/` directory:
+
+- **data_config.yaml:** Directories for raw, interim, and processed data, as well as dataset splits and batch settings.
+- **model_config.yaml:** Model architecture details, optimizer settings, and hyperparameters.
+- **pipeline_config.yaml:** Order of execution and script references for each pipeline stage.
+
+Additionally, you can adjust environment-specific settings via the `.env.example` file (rename to `.env` as needed).
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository.
+2. Create a new branch for your feature or bug fix.
+3. Commit your changes with clear messages.
+4. Open a pull request for review.
+
+For major changes, please open an issue first to discuss the proposed changes.
+
+## License
+
+This project is distributed under the MIT License. See the LICENSE file for more details.
+
+---
