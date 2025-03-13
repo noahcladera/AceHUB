@@ -40,7 +40,6 @@ Tennis Stroke Detection is a modular project that implements a complete pipeline
 noahcladera-acehub/
 └── tennis-stroke-detection/
 ├── README.md # This file
-├── lkxc.py # Pipeline path update script
 ├── Makefile # Build and execution commands
 ├── pyproject.toml # Project configuration
 ├── requirements-prod.txt # Production dependencies
