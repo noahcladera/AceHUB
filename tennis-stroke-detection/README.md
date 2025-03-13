@@ -81,10 +81,6 @@ pip install -r requirements-prod.txt
 
 The project is broken down into several steps which can be run independently:
 
-- **Update the pipeline paths:**  
-This script applies the recommended path fixes for data flow and module references.
-python lkxc.py
-
 
 - **Download and process videos:**  
 Download raw videos and convert them to 30 FPS using:

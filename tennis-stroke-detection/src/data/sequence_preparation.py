@@ -16,12 +16,12 @@ Usage (from command line):
                                            --output_dir output_folder
 OR simply:
     python src/data/sequence_preparation.py --window_size 30 --stride 15
-(to let the script auto-discover a *labeled.csv file)
-
+(to let the script auto-discover a '*_labeled.csv' file)
 """
 
 import argparse
 import os
+import sys
 import numpy as np
 import pandas as pd
 
@@ -135,6 +135,15 @@ def main():
     else:
         output_dir = args.output_dir
 
+    # Set file paths for outputs
+    seq_file = os.path.join(output_dir, "sequences.npy")
+    labels_file = os.path.join(output_dir, "labels.npy")
+
+    # Check if the output already exists, then skip reanalysis
+    if os.path.exists(seq_file) and os.path.exists(labels_file):
+        print(f"Processed data already exists at {output_dir} for CSV '{os.path.basename(csv_path)}'; skipping sequence generation.")
+        sys.exit(0)
+
     # Prepare sequences
     X, y = prepare_sequences(csv_path, window_size=args.window_size, stride=args.stride)
     print(f"Created {len(X)} sequences from {csv_path}")
@@ -143,8 +152,6 @@ def main():
 
     # Save the sequences and labels
     os.makedirs(output_dir, exist_ok=True)
-    seq_file = os.path.join(output_dir, "sequences.npy")
-    labels_file = os.path.join(output_dir, "labels.npy")
     np.save(seq_file, X)
     np.save(labels_file, y)
     print(f"Saved sequences to {seq_file}")
