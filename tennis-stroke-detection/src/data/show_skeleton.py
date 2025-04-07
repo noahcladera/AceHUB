@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-CSV_PATH = "data/processed/video_3/video_3_normalized.csv"
+CSV_PATH = ""
 
 # A minimal set of edges to draw a rough skeleton (MediaPipe Pose style).
 # Add or remove edges as desired.
