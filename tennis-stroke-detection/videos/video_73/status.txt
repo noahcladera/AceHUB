@@ -1,0 +1,7 @@
+has_video: False
+has_normalized_csv: False
+has_data_csv: False
+has_llc: False
+has_clips: False
+is_ready_for_clipping: False
+is_fully_processed: False

@@ -10,22 +10,24 @@ Combines four post-cut processing stages in one script:
   4) Time Normalization  - Normalizes clip timelines to a fixed number of frames
 
 Directory usage:
-  data/processed/
+  videos/
       video_X/
-          video_X_normalized.csv   (input from pre-cut processing)
-          video_X.llc              (manual segmentation file)
-          video_X_labeled.csv      (output from feature engineering)
-          video_X_clips/           (output from clip generation)
+          video_X.mp4               (original video)
+          video_X_data.csv          (pose data from MediaPipe)
+          video_X_normalized.csv    (normalized pose data)
+          video_X.llc               (manual segmentation file)
+          video_X_labeled.csv       (output from feature engineering)
+          video_X_clips/            (output from clip generation)
               stroke_1.mp4
               stroke_2.mp4
               ...
   Strokes_Library/
       stroke_Y/
-          stroke.mp4              (output from clip collection)
-          stroke.csv              (output from clip collection)
-          stroke_norm.csv         (output from time normalization)
-          stroke_overlay.mp4      (output from clip collection)
-          stroke_skeleton.mp4     (output from clip collection)
+          stroke.csv               (output from clip collection)
+          stroke_norm.csv          (output from time normalization)
+          stroke_clip.mp4          (output from clip collection)
+          stroke_overlay.mp4       (output from clip collection)
+          stroke_skeleton.mp4      (output from clip collection)
 
 Simply run:
     python postcutallinone.py
@@ -39,6 +41,7 @@ import re
 import shutil
 import ffmpeg
 import numpy as np
+import cv2  # Add import for OpenCV
 
 # -------------------
 # USER CONFIG
@@ -49,9 +52,25 @@ FORCE_REPROCESS = False  # If True, re-process even if files exist
 
 # Root directories (relative paths)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data", "processed")
+VIDEOS_DIR = os.path.join(SCRIPT_DIR, "..", "videos")  # New videos directory
 FINAL_LIBRARY = os.path.join(SCRIPT_DIR, "..", "Strokes_Library")
 OUTPUT_SUFFIX = "_norm.csv"  # Suffix for time-normalized files
+
+# Add skeleton configuration constants near the top after other constants
+# Skeleton config:
+POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
+POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
+POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
+
+COLOR_LEFT = (255, 0, 0)    
+COLOR_RIGHT = (0, 0, 255)   
+COLOR_CENTER = (0, 255, 0)  
+LINE_THICKNESS = 4
+CIRCLE_RADIUS = 6
+LINE_TYPE = cv2.LINE_AA
+
+# Transparency in overlay mode (1.0 = no transparency)
+ALPHA = 1.0
 
 # -------------------------------------------------------------------------
 # PART 1: FEATURE ENGINEERING - Add stroke labels based on LLC files
@@ -130,14 +149,18 @@ def create_frame_labels(csv_path, llc_path, output_csv):
 
 def run_feature_engineering():
     """
-    For each video folder in data/processed, add stroke labels based on LLC files.
+    For each video folder in videos/, add stroke labels based on LLC files.
     """
     print("\n=== FEATURE ENGINEERING: Adding stroke labels ===")
     
-    # Iterate over each subfolder in BASE_DATA_DIR
-    for folder in os.listdir(BASE_DATA_DIR):
-        folder_path = os.path.join(BASE_DATA_DIR, folder)
+    # Iterate over each subfolder in VIDEOS_DIR
+    for folder in os.listdir(VIDEOS_DIR):
+        folder_path = os.path.join(VIDEOS_DIR, folder)
         if not os.path.isdir(folder_path):
+            continue
+        
+        # Check if this is a video folder
+        if not folder.startswith("video_"):
             continue
 
         # e.g., "video_1"
@@ -311,14 +334,14 @@ def process_video_folder(video_folder):
 
 def run_clip_generation():
     """
-    For each video folder in data/processed, generate clips based on labeled segments.
+    For each video folder in videos/, generate clips based on labeled segments.
     """
     print("\n=== CLIP GENERATION: Creating video clips ===")
     
-    # Loop through all "video_x" folders under data/processed
-    for folder_name in os.listdir(BASE_DATA_DIR):
-        folder_path = os.path.join(BASE_DATA_DIR, folder_name)
-        if not os.path.isdir(folder_path):
+    # Loop through all "video_x" folders under videos/
+    for folder_name in os.listdir(VIDEOS_DIR):
+        folder_path = os.path.join(VIDEOS_DIR, folder_name)
+        if not os.path.isdir(folder_path) or not folder_name.startswith("video_"):
             continue
 
         # Attempt to process that folder if it matches our structure
@@ -331,7 +354,7 @@ def run_clip_generation():
 # -------------------------------------------------------------------------
 def run_clip_collection():
     """
-    Collects all clip files (MP4, CSV) from data/processed/video_x/video_x_clips
+    Collects all clip files (MP4, CSV) from videos/video_x/video_x_clips
     and places them into a structured "Strokes_Library" folder with subfolders for each stroke.
     """
     print("\n=== CLIP COLLECTION: Collecting all clips ===")
@@ -342,17 +365,13 @@ def run_clip_collection():
     # Track the next stroke index
     stroke_counter = 1
     
-    # Iterate over every subfolder in data/processed
-    for folder_name in os.listdir(BASE_DATA_DIR):
-        folder_path = os.path.join(BASE_DATA_DIR, folder_name)
-        if not os.path.isdir(folder_path):
+    # Iterate over every subfolder in videos/
+    for folder_name in os.listdir(VIDEOS_DIR):
+        folder_path = os.path.join(VIDEOS_DIR, folder_name)
+        if not os.path.isdir(folder_path) or not folder_name.startswith("video_"):
             continue
 
-        # We look for subfolders named video_x
-        if not folder_name.startswith("video_"):
-            continue
-
-        # The clip folder is data/processed/video_x/video_x_clips
+        # The clip folder is videos/video_x/video_x_clips
         clips_subfolder = os.path.join(folder_path, f"{folder_name}_clips")
         if not os.path.isdir(clips_subfolder):
             continue
@@ -379,6 +398,12 @@ def run_clip_collection():
             # Create a stroke folder in the library
             stroke_folder = os.path.join(FINAL_LIBRARY, f"stroke_{stroke_counter}")
             os.makedirs(stroke_folder, exist_ok=True)
+            
+            # Create a reference file to track the source video
+            source_info = os.path.join(stroke_folder, "source_info.txt")
+            with open(source_info, 'w') as f:
+                f.write(f"Source Video: {folder_name}\n")
+                f.write(f"Stroke Number in Video: {stroke_num}\n")
             
             # Copy and rename files for this stroke
             for filename, file_ext in files:
@@ -407,20 +432,47 @@ def run_clip_collection():
                     # Path to original video
                     video_path = os.path.join(folder_path, f"{folder_name}.mp4")
                     
-                    # TODO: This needs actual implementation to create overlay and skeleton videos
-                    # For now, we'll just create placeholders
-                    overlay_path = os.path.join(stroke_folder, "stroke_overlay.mp4")
-                    skeleton_path = os.path.join(stroke_folder, "stroke_skeleton.mp4")
-                    
-                    if not os.path.exists(overlay_path) or FORCE_REPROCESS:
-                        # In a real implementation, you would create the overlay video here
-                        shutil.copy2(src_file, overlay_path)
-                        print(f"[PLACEHOLDER] Created overlay video: {overlay_path}")
-                    
-                    if not os.path.exists(skeleton_path) or FORCE_REPROCESS:
-                        # In a real implementation, you would create the skeleton video here
-                        shutil.copy2(src_file, skeleton_path)
-                        print(f"[PLACEHOLDER] Created skeleton video: {skeleton_path}")
+                    # Path to CSV file with pose data
+                    csv_path = os.path.join(folder_path, f"{folder_name}_data.csv")
+                    if not os.path.exists(csv_path):
+                        print(f"[WARN] Pose data CSV not found: {csv_path}, using placeholders.")
+                        # In case we don't have the CSV data, use placeholders like before
+                        overlay_path = os.path.join(stroke_folder, "stroke_overlay.mp4")
+                        skeleton_path = os.path.join(stroke_folder, "stroke_skeleton.mp4")
+                        
+                        if not os.path.exists(overlay_path) or FORCE_REPROCESS:
+                            shutil.copy2(src_file, overlay_path)
+                            print(f"[PLACEHOLDER] Created overlay video: {overlay_path}")
+                        
+                        if not os.path.exists(skeleton_path) or FORCE_REPROCESS:
+                            shutil.copy2(src_file, skeleton_path)
+                            print(f"[PLACEHOLDER] Created skeleton video: {skeleton_path}")
+                    else:
+                        # Generate real overlay and skeleton videos using CSV pose data
+                        overlay_path = os.path.join(stroke_folder, "stroke_overlay.mp4")
+                        skeleton_path = os.path.join(stroke_folder, "stroke_skeleton.mp4")
+                        
+                        # Create overlay video (skeleton over original video)
+                        create_skeleton_video(src_file, csv_path, overlay_path, mode="overlay")
+                        
+                        # Create skeleton video (skeleton on black background)
+                        create_skeleton_video(src_file, csv_path, skeleton_path, mode="skeleton")
+            
+            # Update the status file in the video folder to mark it as processed
+            status_file = os.path.join(folder_path, "status.txt")
+            if os.path.exists(status_file):
+                with open(status_file, 'r') as f:
+                    status_lines = f.readlines()
+                
+                updated_lines = []
+                for line in status_lines:
+                    if line.startswith("is_fully_processed:"):
+                        updated_lines.append("is_fully_processed: True\n")
+                    else:
+                        updated_lines.append(line)
+                
+                with open(status_file, 'w') as f:
+                    f.writelines(updated_lines)
             
             # Increment the stroke counter for the next stroke
             stroke_counter += 1
@@ -547,7 +599,7 @@ def main():
     Main function that runs all four processing steps in sequence.
     """
     print("=== POST-CUT PROCESSING PIPELINE ===")
-    print(f"Base data directory: {BASE_DATA_DIR}")
+    print(f"Videos directory: {VIDEOS_DIR}")
     print(f"Strokes Library: {FINAL_LIBRARY}")
     print(f"FPS: {FPS}")
     print(f"Resampled frames: {RESAMPLED_FRAMES}")
@@ -567,6 +619,177 @@ def main():
     
     print("\n=== ALL POST-CUT PROCESSING COMPLETE ===")
     print(f"Final clips and normalized CSVs are available in: {FINAL_LIBRARY}")
+    
+    # Show a summary of which videos have been processed
+    print("\n=== VIDEO STATUS SUMMARY ===")
+    processed_videos = 0
+    ready_videos = 0
+    for folder_name in os.listdir(VIDEOS_DIR):
+        folder_path = os.path.join(VIDEOS_DIR, folder_name)
+        if not os.path.isdir(folder_path) or not folder_name.startswith("video_"):
+            continue
+            
+        status_file = os.path.join(folder_path, "status.txt")
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status_lines = f.read()
+                
+            if "is_fully_processed: True" in status_lines:
+                print(f"✓ {folder_name} - Processed")
+                processed_videos += 1
+            elif "is_ready_for_clipping: True" in status_lines:
+                print(f"! {folder_name} - Ready for processing but not yet processed")
+                ready_videos += 1
+            else:
+                print(f"✗ {folder_name} - Missing required files")
+    
+    print(f"\nTotal videos: {len([d for d in os.listdir(VIDEOS_DIR) if os.path.isdir(os.path.join(VIDEOS_DIR, d)) and d.startswith('video_')])}")
+    print(f"Processed videos: {processed_videos}")
+    print(f"Ready for processing: {ready_videos}")
+
+# Add the following functions before run_clip_collection()
+def load_landmarks(csv_path):
+    """
+    Reads CSV, returns a list of dict: frames[i][lm_id] = (x, y) in [0..1].
+    Expects columns like 'lm_0_x', 'lm_0_y', etc.
+    """
+    frames = []
+    with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+
+        # Figure out which columns store each of the 33 landmarks
+        lm_xy = {}
+        for lm_id in range(33):
+            x_col = f"lm_{lm_id}_x"
+            y_col = f"lm_{lm_id}_y"
+            if x_col in header and y_col in header:
+                x_idx = header.index(x_col)
+                y_idx = header.index(y_col)
+                lm_xy[lm_id] = (x_idx, y_idx)
+
+        for row in reader:
+            landm = {}
+            for lm_id in range(33):
+                if lm_id in lm_xy:
+                    x_c, y_c = lm_xy[lm_id]
+                    x_val = float(row[x_c])
+                    y_val = float(row[y_c])
+                    landm[lm_id] = (x_val, y_val)
+                else:
+                    landm[lm_id] = (0.0, 0.0)
+            frames.append(landm)
+    return frames
+
+def draw_pretty_skeleton(frame_bgr, landmarks_dict, width, height):
+    """
+    Draws a color-coded skeleton with thicker lines and anti-aliasing.
+    """
+    # Center lines
+    for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
+        xA, yA = landmarks_dict[lmA]
+        xB, yB = landmarks_dict[lmB]
+        ptA = (int(xA * width), int(yA * height))
+        ptB = (int(xB * width), int(yB * height))
+        cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Left edges
+    for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
+        xA, yA = landmarks_dict[lmA]
+        xB, yB = landmarks_dict[lmB]
+        ptA = (int(xA * width), int(yA * height))
+        ptB = (int(xB * width), int(yB * height))
+        cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Right edges
+    for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
+        xA, yA = landmarks_dict[lmA]
+        xB, yB = landmarks_dict[lmB]
+        ptA = (int(xA * width), int(yA * height))
+        ptB = (int(xB * width), int(yB * height))
+        cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Keypoints
+    for lm_id in range(33):
+        nx, ny = landmarks_dict[lm_id]
+        px = int(nx * width)
+        py = int(ny * height)
+        # color-coded by side
+        if lm_id in (11,13,15,23,25,27):
+            kp_color = COLOR_LEFT
+        elif lm_id in (12,14,16,24,26,28):
+            kp_color = COLOR_RIGHT
+        else:
+            kp_color = COLOR_CENTER
+
+        cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
+
+def create_skeleton_video(video_path, csv_path, output_path, mode="skeleton"):
+    """
+    Creates a skeleton or overlay video from a video and landmark CSV.
+    - mode: "overlay" or "skeleton"
+    """
+    if os.path.exists(output_path) and not FORCE_REPROCESS:
+        print(f"[SKIP] {mode} video already exists: {output_path}")
+        return False
+        
+    # Check if CSV exists
+    if not os.path.exists(csv_path):
+        print(f"[WARN] CSV not found: {csv_path}, skipping {mode} video")
+        return False
+        
+    # Open video
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"[ERROR] Could not open {video_path}")
+        return False
+        
+    # Get video properties
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Create video writer
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    # Load landmarks
+    frames_landmarks = load_landmarks(csv_path)
+    print(f"[INFO] Found {len(frames_landmarks)} landmarks in {csv_path}")
+    
+    # Process frame by frame
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        if mode == "skeleton":
+            # Create black background
+            output_frame = np.zeros((height, width, 3), dtype=np.uint8)
+            if frame_idx < len(frames_landmarks):
+                draw_pretty_skeleton(output_frame, frames_landmarks[frame_idx], width, height)
+                
+        elif mode == "overlay":
+            output_frame = frame.copy()
+            if frame_idx < len(frames_landmarks):
+                if ALPHA < 1.0:
+                    overlay = frame.copy()
+                    draw_pretty_skeleton(overlay, frames_landmarks[frame_idx], width, height)
+                    blend_factor = 1.0 - ALPHA
+                    cv2.addWeighted(overlay, blend_factor, frame, ALPHA, 0, output_frame)
+                else:
+                    draw_pretty_skeleton(output_frame, frames_landmarks[frame_idx], width, height)
+                    
+        # Write frame
+        out.write(output_frame)
+        frame_idx += 1
+        
+    # Clean up
+    cap.release()
+    out.release()
+    print(f"[INFO] Created {mode} video: {output_path}")
+    return True
 
 if __name__ == "__main__":
     main()

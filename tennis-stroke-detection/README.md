@@ -31,23 +31,28 @@ tennis-stroke-detection/
 │   ├── video_config.yaml        # Video processing settings
 │   └── segmentation_config.yaml # Stroke segmentation settings
 ├── videos/                      # All video-related data
-│   ├── raw/                     # Raw downloaded videos
-│   │   └── video_1.mp4
-│   │   └── video_2.mp4
-│   ├── processed/               # Processed data (pose, normalized)
-│   │   └── video_1/
-│   │       └── video_1_data.csv
-│   │       └── video_1_normalized.csv
-│   │       └── video_1.llc
-│   └── Strokes_Library/         # Final organized stroke clips
-│       └── stroke_1/            # Each stroke in its own folder
-│           └── stroke.csv       # Raw pose data for this stroke
-│           └── stroke_norm.csv  # Normalized pose data
-│           └── stroke_clip.mp4  # Video clip
-│           └── stroke_skeleton.mp4 # Skeleton overlay
-│           └── stroke_overlay.mp4  # Pose overlay
+│   └── video_X/                 # Each video in its own folder
+│       ├── video_X.mp4          # Original video
+│       ├── video_X_data.csv     # Raw pose data 
+│       ├── video_X_normalized.csv # Normalized pose data
+│       ├── video_X.llc          # Manual segmentation file
+│       ├── status.txt           # Processing status
+│       └── video_X_clips/       # Generated stroke clips
+│           ├── stroke_1.mp4
+│           ├── stroke_1.csv
+│           └── ...
+├── Strokes_Library/             # Final organized stroke clips
+│   └── stroke_Y/                # Each stroke in its own folder
+│       ├── stroke.csv           # Raw pose data for this stroke
+│       ├── stroke_norm.csv      # Normalized pose data
+│       ├── stroke_clip.mp4      # Video clip
+│       ├── stroke_skeleton.mp4  # Skeleton overlay
+│       ├── stroke_overlay.mp4   # Pose overlay
+│       └── source_info.txt      # Reference to source video
 ├── scripts/                     # Utility scripts
-│   └── process_video.py         # Command-line interface
+│   ├── process_video.py         # Command-line interface
+│   ├── reorganize_videos.py     # Organize videos into new structure
+│   └── find_and_migrate_videos.py # Migrate existing videos
 └── README.md
 ```
 
@@ -72,30 +77,40 @@ pip install -r requirements.txt
 
 ## Usage
 
-The pipeline can be run using the command-line interface:
+### Migrating Existing Videos
 
-### Process a Video
-
-To process a video (download, extract pose, normalize):
+If you have existing videos in the `data/` directory structure, you can migrate them to the new structure:
 
 ```bash
-python scripts/process_video.py process <youtube_url> --output video_1
+python find_and_migrate_videos.py
 ```
 
-Options:
-- `--output` or `-o`: Name for the output video (default: video_1)
-- `--fps`: Target FPS (default: 30)
+### Adding New Videos
 
-### Process Stroke Segments
+To add a new video to the system:
 
-After manually segmenting the video with LosslessCut:
+1. Create a folder for it in the `videos/` directory:
 
 ```bash
-python scripts/process_video.py strokes video_1
+mkdir -p videos/video_X
 ```
 
-Options:
-- `--force` or `-f`: Force reprocessing of existing files
+2. Copy your video file, normalized CSV, and other files into this folder.
+
+3. Create an LLC file using LosslessCut to manually segment the strokes.
+
+### Processing Videos for Stroke Detection
+
+After setting up videos in the `videos/` directory:
+
+```bash
+python src/stroke_segmentation.py
+```
+
+This script will:
+1. Process each video that has the required files
+2. Create stroke clips from the LLC segments
+3. Add the clips to the Strokes_Library in a standardized format
 
 ## Configuration
 

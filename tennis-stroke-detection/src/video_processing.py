@@ -9,15 +9,12 @@ Combines three stages in one script:
   3) Normalization   - Spatially & temporally normalize each CSV
 
 Directory usage:
-  data/raw/
+  videos/
       video_X/
-          video_X.mp4   (final MP4 after download & conversion)
-  data/interim/
-      video_X/
-          video_X_data.csv
-  data/processed/
-      video_X/
-          video_X_normalized.csv
+          video_X.mp4              (final MP4 after download & conversion)
+          video_X_data.csv         (raw pose data)
+          video_X_normalized.csv   (spatially normalized pose data)
+          status.txt               (processing status)
 
 Simply edit `youtube_urls` as needed, then run:
     python all_in_one_pre_cut.py
@@ -55,13 +52,11 @@ FORCE_REPROCESS = False  # If True, re-extract & re-normalize even if CSVs exist
 NUM_PROCESSES = min(8, cpu_count())
 
 # Root directories (relative paths)
-# Adjust if your structure differs
-RAW_DIR       = os.path.join("data", "raw")      # final MP4 goes here
-INTERIM_DIR   = os.path.join("data", "interim")  # raw CSV (pose data)
-PROCESSED_DIR = os.path.join("data", "processed")# normalized CSV
+# New unified videos directory
+VIDEOS_DIR = "videos"  # All video data goes here
 
 # -------------------------------------------------------------------------
-# PART 1: ACQUISITION - Download & Convert to 30 FPS
+# PART 1: ACQUISITION - Download & Convert to 30 FPS
 # -------------------------------------------------------------------------
 def download_video(url, idx, video_folder):
     """
@@ -123,19 +118,19 @@ def find_next_available_index(directory):
 
 def run_acquisition():
     """
-    Downloads each YouTube video to data/raw/video_X,
+    Downloads each YouTube video to videos/video_X,
     converts to 30 FPS as video_X.mp4, removing the temp file afterwards.
     """
-    os.makedirs(RAW_DIR, exist_ok=True)
+    os.makedirs(VIDEOS_DIR, exist_ok=True)
 
-    start_index = find_next_available_index(RAW_DIR)
+    start_index = find_next_available_index(VIDEOS_DIR)
     print(f"\n=== ACQUISITION: Checking from video index {start_index} ===")
 
     for i, url in enumerate(youtube_urls):
         idx = start_index + i
         print(f"[INFO] Downloading video_{idx}: {url}")
 
-        video_folder = os.path.join(RAW_DIR, f"video_{idx}")
+        video_folder = os.path.join(VIDEOS_DIR, f"video_{idx}")
         final_path   = os.path.join(video_folder, f"video_{idx}.mp4")
 
         if os.path.isfile(final_path):
@@ -152,12 +147,16 @@ def run_acquisition():
         if os.path.exists(temp_path):
             os.remove(temp_path)
             print(f"[INFO] Removed temp file: {temp_path}")
+            
+        # 4) Create status file
+        update_status_file(video_folder, "has_video", True)
+        
     print("=== ACQUISITION COMPLETE ===\n")
 
 # -------------------------------------------------------------------------
-# PART 2: POSE EXTRACTION - MediaPipe -> data/interim/...
+# PART 2: POSE EXTRACTION - MediaPipe -> videos/video_X/video_X_data.csv
 # -------------------------------------------------------------------------
-def find_mp4_in_raw_folder(folder):
+def find_mp4_in_folder(folder):
     """
     e.g. folder='video_3' => expects 'video_3.mp4'
     or else the first .mp4 found.
@@ -202,38 +201,40 @@ def calculate_angle_2d(ax, ay, bx, by, cx, cy):
 
 def process_single_video_pose(video_num):
     """
-    1) Finds data/raw/video_num/video_num.mp4
-    2) Creates data/interim/video_num folder => store video_num_data.csv
-    3) Uses MediaPipe Pose on each frame
+    For a single video number, reads video_X.mp4 and extracts pose data 
+    to video_X_data.csv.
     """
-    raw_folder = os.path.join(RAW_DIR, f"video_{video_num}")
-    mp4_path   = os.path.join(raw_folder, f"video_{video_num}.mp4")
-    if not os.path.isfile(mp4_path):
-        print(f"[SKIP] No MP4 => {mp4_path}")
+    video_name = f"video_{video_num}"
+    video_folder = os.path.join(VIDEOS_DIR, video_name)
+    
+    if not os.path.exists(video_folder):
+        print(f"[SKIP] Video folder not found: {video_folder}")
         return
 
-    # The output CSV is stored in data/interim/video_{video_num}/video_{video_num}_data.csv
-    out_folder = os.path.join(INTERIM_DIR, f"video_{video_num}")
-    os.makedirs(out_folder, exist_ok=True)
-    out_csv = os.path.join(out_folder, f"video_{video_num}_data.csv")
+    # Output path
+    output_csv = os.path.join(video_folder, f"{video_name}_data.csv")
 
-    if os.path.exists(out_csv) and not FORCE_REPROCESS:
-        print(f"[SKIP] Already have => {out_csv}")
+    if os.path.exists(output_csv) and not FORCE_REPROCESS:
+        print(f"[SKIP] Pose data CSV already exists: {output_csv}")
         return
 
-    print(f"[EXTRACT] {mp4_path} -> {out_csv}")
+    # Find MP4 file
+    video_path = find_mp4_in_folder(video_folder)
+    if not video_path:
+        print(f"[ERROR] No MP4 found in {video_folder}")
+        return
 
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(static_image_mode=False, model_complexity=2,
                         smooth_landmarks=True, min_detection_confidence=0.5,
                         min_tracking_confidence=0.5)
 
-    cap = cv2.VideoCapture(mp4_path)
+    cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"[ERROR] Cannot open => {mp4_path}")
+        print(f"[ERROR] Cannot open => {video_path}")
         return
 
-    with open(out_csv, "w", newline="") as csvfile:
+    with open(output_csv, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         # build header
         header = ["frame_index"]
@@ -261,27 +262,55 @@ def process_single_video_pose(video_num):
             frame_idx += 1
 
     cap.release()
-    print(f"[DONE] Pose => {out_csv}")
+    print(f"[DONE] Pose => {output_csv}")
 
 def run_pose_extraction():
     """
-    Loop through data/raw for all 'video_X' folders and do process_single_video_pose(X).
+    For each video_X folder in the videos directory,
+    process the matching MP4 to extract pose landmarks.
+    Uses multiprocessing for parallel execution.
     """
-    os.makedirs(INTERIM_DIR, exist_ok=True)
+    print("\n=== POSE EXTRACTION: Extracting landmarks ===")
+    
+    # Find all video folders
+    if not os.path.exists(VIDEOS_DIR):
+        print(f"[ERROR] Videos directory not found: {VIDEOS_DIR}")
+        return
 
-    # find all subfolders 'video_#'
-    for item in os.listdir(RAW_DIR):
-        if not item.startswith("video_"):
-            continue
-        try:
-            idx = int(item.split("_")[1])
-        except:
-            continue
-        process_single_video_pose(idx)
+    video_nums = []
+    for item in os.listdir(VIDEOS_DIR):
+        folder_path = os.path.join(VIDEOS_DIR, item)
+        if os.path.isdir(folder_path) and item.startswith("video_"):
+            try:
+                # Extract the video number
+                num = int(item.split("_")[1])
+                video_nums.append(num)
+            except (ValueError, IndexError):
+                pass
+    
+    if not video_nums:
+        print("[INFO] No video folders found.")
+        return
+        
+    print(f"[INFO] Found {len(video_nums)} video folders to process")
+    
+    # Process in parallel
+    with Pool(NUM_PROCESSES) as pool:
+        pool.map(process_single_video_pose, video_nums)
+        
+    # Update status files for processed videos
+    for num in video_nums:
+        video_name = f"video_{num}"
+        video_folder = os.path.join(VIDEOS_DIR, video_name)
+        data_csv = os.path.join(video_folder, f"{video_name}_data.csv")
+        
+        if os.path.exists(data_csv):
+            update_status_file(video_folder, "has_data_csv", True)
+    
     print("=== POSE EXTRACTION COMPLETE ===\n")
 
 # -------------------------------------------------------------------------
-# PART 3: NORMALIZATION - data/interim => data/processed
+# PART 3: NORMALIZATION - videos/video_X/video_X_data.csv => videos/video_X/video_X_normalized.csv
 # -------------------------------------------------------------------------
 def normalize_pose(row):
     """
@@ -383,9 +412,10 @@ def derivative(data, fps=30):
 
 def process_single_csv_norm(input_csv, output_csv, fps=30):
     """
-    1) read raw csv => for each row => normalize
-    2) keep a sliding window of length 30 for velocity detection
-    3) detect swing phase => store columns
+    For a single video's pose data CSV:
+      1. Read input_csv (video_X_data.csv)
+      2. Normalize landmarks spatially
+      3. Write to output_csv (video_X_normalized.csv)
     """
     rows = []
     with open(input_csv, "r") as f:
@@ -447,63 +477,134 @@ def process_single_csv_norm(input_csv, output_csv, fps=30):
 
 def run_normalization():
     """
-    For each video_X folder in data/interim,
-    find "video_X_data.csv" => produce "video_X_normalized.csv" in data/processed/video_X
+    For each video_X_data.csv in the videos directory,
+    normalize the landmarks and save to video_X_normalized.csv.
     """
-    os.makedirs(PROCESSED_DIR, exist_ok=True)
-
-    for folder_name in os.listdir(INTERIM_DIR):
+    print("\n=== NORMALIZATION: Spatially normalizing CSVs ===")
+    
+    # Iterate through video folders
+    for folder_name in os.listdir(VIDEOS_DIR):
         if not folder_name.startswith("video_"):
             continue
-        subdir = os.path.join(INTERIM_DIR, folder_name)
-        if not os.path.isdir(subdir):
+            
+        folder_path = os.path.join(VIDEOS_DIR, folder_name)
+        if not os.path.isdir(folder_path):
             continue
-
-        # find *_data.csv
-        data_csv = None
-        for f in os.listdir(subdir):
-            if f.endswith("_data.csv"):
-                data_csv = os.path.join(subdir, f)
-                break
-        if not data_csv:
-            print(f"[SKIP] No data CSV in {subdir}")
+            
+        # Input & output CSV paths
+        input_csv = os.path.join(folder_path, f"{folder_name}_data.csv")
+        output_csv = os.path.join(folder_path, f"{folder_name}_normalized.csv")
+        
+        if not os.path.exists(input_csv):
+            print(f"[SKIP] Data CSV not found for {folder_name}")
             continue
-        # build output dir in data/processed
-        out_dir = os.path.join(PROCESSED_DIR, folder_name)
-        os.makedirs(out_dir, exist_ok=True)
-        out_csv = os.path.join(out_dir, f"{folder_name}_normalized.csv")
-
-        if os.path.isfile(out_csv) and not FORCE_REPROCESS:
-            print(f"[SKIP] normalized => {out_csv}")
+            
+        if os.path.exists(output_csv) and not FORCE_REPROCESS:
+            print(f"[SKIP] Normalized CSV already exists: {output_csv}")
             continue
-
-        print(f"[NORM] {data_csv} => {out_csv}")
-        process_single_csv_norm(data_csv, out_csv, fps=FPS)
-
+            
+        # Process the CSV
+        print(f"[INFO] Normalizing {folder_name}...")
+        process_single_csv_norm(input_csv, output_csv, fps=FPS)
+        
+        # Update status file
+        update_status_file(folder_path, "has_normalized_csv", True)
+        
     print("=== NORMALIZATION COMPLETE ===\n")
 
+def update_status_file(folder_path, key, value):
+    """
+    Updates a single key in the status.txt file.
+    Creates the file if it doesn't exist.
+    """
+    status_file = os.path.join(folder_path, "status.txt")
+    status = {}
+    
+    # Read existing status if available
+    if os.path.exists(status_file):
+        with open(status_file, 'r') as f:
+            for line in f:
+                if ':' in line:
+                    k, v = line.strip().split(':', 1)
+                    status[k.strip()] = v.strip()
+    
+    # Update the key
+    status[key] = str(value)
+    
+    # Check if we have enough information to update ready_for_clipping
+    has_video = status.get("has_video", "False").lower() == "true"
+    has_normalized_csv = status.get("has_normalized_csv", "False").lower() == "true"
+    has_llc = status.get("has_llc", "False").lower() == "true"
+    
+    status["is_ready_for_clipping"] = str(has_video and has_normalized_csv and has_llc)
+    
+    # Write updated status
+    with open(status_file, 'w') as f:
+        for k, v in status.items():
+            f.write(f"{k}: {v}\n")
 
-# -------------------------------------------------------------------------
-# MASTER "MAIN" - calls all steps
-# -------------------------------------------------------------------------
 def main():
     """
-    1) run_acquisition - download & convert videos to data/raw/video_X/video_X.mp4
-    2) run_pose_extraction - produce data/interim/video_X/video_X_data.csv
-    3) run_normalization - produce data/processed/video_X/video_X_normalized.csv
+    Main function that runs all three processing steps in sequence.
     """
-    # Step A: Download + convert
+    print("=== PRE-CUT PROCESSING PIPELINE ===")
+    print(f"Videos directory: {VIDEOS_DIR}")
+    print(f"FPS: {FPS}")
+    print(f"Force reprocess: {FORCE_REPROCESS}")
+    
+    # Step 1: Acquisition - Download & convert videos
     run_acquisition()
-
-    # Step B: Pose extraction => data/interim
+    
+    # Step 2: Pose Extraction - Extract pose landmarks using MediaPipe
     run_pose_extraction()
-
-    # Step C: Normalization => data/processed
+    
+    # Step 3: Normalization - Normalize pose data
     run_normalization()
-
-    print("All-in-one pre-cut pipeline is DONE.\n"
-          "You can now manually create .llc for each video_x and run the post-cut scripts if needed.")
-
+    
+    print("\n=== ALL PRE-CUT PROCESSING COMPLETE ===")
+    
+    # Show a summary of video status
+    print("\n=== VIDEO STATUS SUMMARY ===")
+    processed_videos = 0
+    ready_videos = 0
+    incomplete_videos = 0
+    
+    for folder_name in os.listdir(VIDEOS_DIR):
+        if not folder_name.startswith("video_") or not os.path.isdir(os.path.join(VIDEOS_DIR, folder_name)):
+            continue
+            
+        folder_path = os.path.join(VIDEOS_DIR, folder_name)
+        status_file = os.path.join(folder_path, "status.txt")
+        
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                content = f.read()
+                
+            has_all_files = (
+                "has_video: True" in content and
+                "has_data_csv: True" in content and
+                "has_normalized_csv: True" in content
+            )
+            
+            if "is_ready_for_clipping: True" in content:
+                ready_videos += 1
+                print(f"✓ {folder_name} - Ready for clipping")
+            elif has_all_files:
+                processed_videos += 1
+                print(f"✓ {folder_name} - Processing complete (needs LLC file)")
+            else:
+                incomplete_videos += 1
+                print(f"✗ {folder_name} - Processing incomplete")
+                
+    total_videos = processed_videos + ready_videos + incomplete_videos
+    print(f"\nTotal videos: {total_videos}")
+    print(f"Processing complete: {processed_videos}")
+    print(f"Ready for clipping: {ready_videos}")
+    print(f"Processing incomplete: {incomplete_videos}")
+    
+    print("\nNext steps:")
+    print("1. For processed videos, create LLC files using LosslessCut")
+    print("2. Run stroke_segmentation.py to generate stroke clips")
 
 if __name__ == "__main__":
     main()
