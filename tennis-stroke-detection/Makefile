@@ -1,60 +1,140 @@
-.PHONY: all install install-prod update download extract normalize feature-engineering train predict clip clean
+# Tennis Stroke Detection Pipeline
+# Author: Noah Cladera
 
-# Install development dependencies from requirements.txt
+.PHONY: all install install-dev venv test lint format docs clean data download extract normalize features train predict clip
+
+# Variables
+PYTHON = python
+PIP = pip
+PYTEST = pytest
+BLACK = black
+FLAKE8 = flake8
+ISORT = isort
+MYPY = mypy
+
+# Default target
+.DEFAULT_GOAL := help
+
+# Help command
+help:
+	@echo "Tennis Stroke Detection Makefile"
+	@echo "================================="
+	@echo ""
+	@echo "Setup:"
+	@echo "  make venv        - Create a virtual environment"
+	@echo "  make install     - Install production dependencies"
+	@echo "  make install-dev - Install development dependencies"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make test        - Run tests"
+	@echo "  make lint        - Run linters"
+	@echo "  make format      - Format code"
+	@echo "  make docs        - Generate documentation"
+	@echo ""
+	@echo "Pipeline:"
+	@echo "  make all         - Run full pipeline"
+	@echo "  make download    - Download and process videos"
+	@echo "  make extract     - Extract pose data"
+	@echo "  make normalize   - Normalize pose data"
+	@echo "  make features    - Generate features"
+	@echo "  make train       - Train the model"
+	@echo "  make predict     - Run inference"
+	@echo "  make clip        - Generate video clips"
+	@echo ""
+	@echo "Data:"
+	@echo "  make data        - Prepare data directories"
+	@echo ""
+	@echo "Clean:"
+	@echo "  make clean       - Remove generated files"
+
+# Setup
+venv:
+	@echo "Creating virtual environment..."
+	$(PYTHON) -m venv .venv
+	@echo "Activate with: source .venv/bin/activate"
+
 install:
-	@echo "Installing development dependencies..."
-	pip install -r requirements.txt
-
-# Install production dependencies from requirements-prod.txt
-install-prod:
 	@echo "Installing production dependencies..."
-	pip install -r requirements-prod.txt
+	$(PIP) install --upgrade pip
+	$(PIP) install -e .
 
-# Update pipeline paths by running the path update script
-update:
-	@echo "Updating pipeline paths..."
-	python lkxc.py
+install-dev:
+	@echo "Installing development dependencies..."
+	$(PIP) install --upgrade pip
+	$(PIP) install -e ".[dev]"
 
-# Download and preprocess raw videos (e.g., using yt-dlp and FFmpeg)
+# Quality Assurance
+test:
+	@echo "Running tests..."
+	$(PYTEST) tests/ -v
+
+lint:
+	@echo "Running linters..."
+	$(FLAKE8) src/ tests/
+	$(ISORT) --check-only src/ tests/
+	$(MYPY) src/
+
+format:
+	@echo "Formatting code..."
+	$(BLACK) src/ tests/
+	$(ISORT) src/ tests/
+
+docs:
+	@echo "Generating documentation..."
+	cd docs && make html
+
+# Data Setup
+data:
+	@echo "Setting up data directories..."
+	mkdir -p data/raw
+	mkdir -p data/interim
+	mkdir -p data/processed
+	mkdir -p data/external
+
+# Pipeline Commands
 download:
 	@echo "Downloading and processing raw videos..."
-	python src/data/acquisition.py
+	$(PYTHON) -m src.data.acquisition
 
-# Extract pose data with MediaPipe
 extract:
 	@echo "Extracting pose data from videos..."
-	python src/data/pose_extraction.py
+	$(PYTHON) -m src.data.pose_extraction
 
-# Normalize the extracted pose data (both spatially and temporally)
 normalize:
 	@echo "Normalizing pose data..."
-	python src/data/normalization.py
+	$(PYTHON) -m src.data.normalization
 
-# Perform feature engineering and merge manual labels with normalized CSV data
-feature-engineering:
+features:
 	@echo "Performing feature engineering..."
-	python src/data/feature_engineering.py
+	$(PYTHON) -m src.data.feature_engineering
 
-# Train the tennis stroke detection model (using, e.g., LSTM or Transformer)
 train:
 	@echo "Training the detection model..."
-	python src/training/trainer.py
+	$(PYTHON) -m src.training.trainer
 
-# Run inference on new videos to detect strokes
 predict:
 	@echo "Running inference..."
-	python src/inference/predictor.py
+	$(PYTHON) -m src.inference.predictor
 
-# Generate video clips based on detected stroke segments
 clip:
 	@echo "Generating clips from detection results..."
-	python src/inference/clip_generator.py
+	$(PYTHON) -m src.inference.clip_generator
 
-# The "all" target runs the full pipeline in sequence:
-all: update download extract normalize feature-engineering train predict clip
+# Full pipeline
+all: data download extract normalize features train predict clip
 
-# Clean up any temporary files or build artifacts if necessary.
+# Cleanup
 clean:
 	@echo "Cleaning up temporary files..."
-	# For example, remove __pycache__ directories or other caches:
-	find . -type d -name "__pycache__" -exec rm -r {} +
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete
+	find . -type f -name "*.pyo" -delete
+	find . -type f -name "*.pyd" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	find . -type d -name ".mypy_cache" -exec rm -rf {} +
+	find . -type f -name ".coverage" -delete
+	find . -type d -name "htmlcov" -exec rm -rf {} +
+	find . -type d -name "dist" -exec rm -rf {} +
+	find . -type d -name "build" -exec rm -rf {} +
+	rm -rf docs/_build/

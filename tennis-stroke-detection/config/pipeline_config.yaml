@@ -1,31 +1,98 @@
 # pipeline_config.yaml
-# High-level instructions describing which steps to run in your ML pipeline.
+# Configuration for the tennis stroke detection pipeline
 
+# Pipeline steps configuration
 pipeline:
-  - step: "download_videos"
-    script: "src/data/acquisition.py"
-    description: "Download and convert videos to a uniform FPS."
+  - name: "download_videos"
+    enabled: true
+    module: "src.data.acquisition"
+    description: "Download and convert videos to a uniform format"
+    params:
+      source_type: "youtube"  # Can be "youtube", "local", or "web"
+      max_videos: 50
+      convert_to_mp4: true
+      target_fps: 30
 
-  - step: "pose_extraction"
-    script: "src/data/pose_extraction.py"
-    description: "Extract raw pose landmarks from videos using MediaPipe."
+  - name: "pose_extraction"
+    enabled: true
+    module: "src.data.pose_extraction"
+    description: "Extract pose landmarks using MediaPipe"
+    params:
+      model: "POSE_LANDMARK_FULL"
+      min_detection_confidence: 0.5
+      min_tracking_confidence: 0.5
+      static_image_mode: false
+      extract_hands: true
+      extract_face: false
 
-  - step: "normalization"
-    script: "src/data/normalization.py"
-    description: "Normalize pose data (spatial & temporal)."
+  - name: "normalization"
+    enabled: true
+    module: "src.data.normalization"
+    description: "Normalize pose data spatially and temporally"
+    params:
+      spatial_normalization: true
+      temporal_normalization: true
+      interpolation_method: "linear"
+      smoothing_window: 5
+      target_sequence_length: 120
 
-  - step: "feature_engineering"
-    script: "src/data/feature_engineering.py"
-    description: "Create labeled CSV files from normalized CSV & manual LLC segments."
+  - name: "feature_engineering"
+    enabled: true
+    module: "src.data.feature_engineering"
+    description: "Extract features and prepare the dataset"
+    params:
+      calculate_angles: true
+      calculate_velocities: true
+      calculate_accelerations: true
+      apply_pca: false
+      feature_selection: true
+      feature_selection_method: "mutual_info"
+      num_features: 100
 
-  - step: "training"
-    script: "src/training/trainer.py"
-    description: "Train your stroke detection model using the resulting dataset."
+  - name: "training"
+    enabled: true
+    module: "src.training.trainer"
+    description: "Train the stroke detection model"
+    params:
+      model_type: "lstm"  # Options: lstm, transformer, cnn, gcn
+      learning_rate: 0.001
+      batch_size: 32
+      epochs: 50
+      early_stopping: true
+      patience: 10
+      class_weights: "balanced"
+      save_model: true
+      save_best_only: true
 
-  - step: "inference"
-    script: "src/inference/predictor.py"
-    description: "Run inference on new videos or data."
+  - name: "inference"
+    enabled: true
+    module: "src.inference.predictor"
+    description: "Run inference on new videos"
+    params:
+      confidence_threshold: 0.7
+      nms_threshold: 0.3
+      batch_size: 16
+      save_predictions: true
+      visualize_results: true
 
-  - step: "clip_generation"
-    script: "src/inference/clip_generator.py"
-    description: "Create short clips of identified strokes from original videos."
+  - name: "clip_generation"
+    enabled: true
+    module: "src.inference.clip_generator"
+    description: "Generate video clips of detected strokes"
+    params:
+      padding_seconds: 0.5
+      output_format: "mp4"
+      resize_output: true
+      width: 720
+      height: 480
+      add_labels: true
+      add_confidence: true
+
+# Global settings
+settings:
+  log_level: "INFO"
+  use_gpu: true
+  num_workers: 4
+  random_seed: 42
+  save_interim_results: true
+  output_dir: "output"
