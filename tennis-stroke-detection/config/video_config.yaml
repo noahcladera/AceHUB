@@ -1,0 +1,25 @@
+# video_config.yaml
+# Configuration for video processing and pose extraction pipeline
+
+# Directory paths
+paths:
+  videos_dir: "videos"
+  raw_dir: "videos/raw"          # Raw videos
+  processed_dir: "videos/processed"  # Processed data and LLC files
+
+# Video processing settings
+video:
+  target_fps: 30
+  resize_width: 1280
+  resize_height: 720
+
+# Pose extraction settings
+pose:
+  calculate_angles: true
+  num_processes: 8  # Maximum parallel workers for pose extraction
+  model: "POSE_LANDMARK_FULL"
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+  static_image_mode: false
+  extract_hands: true
+  extract_face: false 

@@ -6,7 +6,7 @@ postcutallinone.py
 Combines four post-cut processing stages in one script:
   1) Feature Engineering - Adds stroke labels to frames based on LLC files
   2) Clip Generation     - Creates video clips from labeled segments
-  3) Clip Collection     - Collects all clips into a single "Final library" folder
+  3) Clip Collection     - Collects all clips into a single "Strokes_Library" folder
   4) Time Normalization  - Normalizes clip timelines to a fixed number of frames
 
 Directory usage:
@@ -19,10 +19,13 @@ Directory usage:
               stroke_1.mp4
               stroke_2.mp4
               ...
-  Final library/
-      video_X_stroke_Y.mp4         (output from clip collection)
-      video_X_stroke_Y.csv         (output from clip collection)
-      video_X_stroke_Y_norm.csv    (output from time normalization)
+  Strokes_Library/
+      stroke_Y/
+          stroke.mp4              (output from clip collection)
+          stroke.csv              (output from clip collection)
+          stroke_norm.csv         (output from time normalization)
+          stroke_overlay.mp4      (output from clip collection)
+          stroke_skeleton.mp4     (output from clip collection)
 
 Simply run:
     python postcutallinone.py
@@ -47,7 +50,7 @@ FORCE_REPROCESS = False  # If True, re-process even if files exist
 # Root directories (relative paths)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data", "processed")
-FINAL_LIBRARY = os.path.join(SCRIPT_DIR, "..", "Final library")
+FINAL_LIBRARY = os.path.join(SCRIPT_DIR, "..", "Strokes_Library")
 OUTPUT_SUFFIX = "_norm.csv"  # Suffix for time-normalized files
 
 # -------------------------------------------------------------------------
@@ -329,13 +332,16 @@ def run_clip_generation():
 def run_clip_collection():
     """
     Collects all clip files (MP4, CSV) from data/processed/video_x/video_x_clips
-    and places them into a single folder: "Final library".
+    and places them into a structured "Strokes_Library" folder with subfolders for each stroke.
     """
     print("\n=== CLIP COLLECTION: Collecting all clips ===")
     
-    # Create the final library folder if it doesn't exist
+    # Create the Strokes Library folder if it doesn't exist
     os.makedirs(FINAL_LIBRARY, exist_ok=True)
-
+    
+    # Track the next stroke index
+    stroke_counter = 1
+    
     # Iterate over every subfolder in data/processed
     for folder_name in os.listdir(BASE_DATA_DIR):
         folder_path = os.path.join(BASE_DATA_DIR, folder_name)
@@ -350,25 +356,75 @@ def run_clip_collection():
         clips_subfolder = os.path.join(folder_path, f"{folder_name}_clips")
         if not os.path.isdir(clips_subfolder):
             continue
-
-        # For each file in the clips folder (e.g. stroke_1.mp4, stroke_1.csv, etc.)
+            
+        # Group files by stroke number
+        stroke_files = {}
         for filename in os.listdir(clips_subfolder):
-            src_file = os.path.join(clips_subfolder, filename)
-            if not os.path.isfile(src_file):
+            if not os.path.isfile(os.path.join(clips_subfolder, filename)):
                 continue
-
-            # We'll rename "stroke_1.mp4" to "video_3_stroke_1.mp4" if folder_name is "video_3"
-            dest_filename = f"{folder_name}_{filename}"  # e.g. "video_3_stroke_1.mp4"
-            dest_path = os.path.join(FINAL_LIBRARY, dest_filename)
-
-            if os.path.exists(dest_path) and not FORCE_REPROCESS:
-                print(f"[SKIP] File already exists in Final library: {dest_path}")
-                continue
-
-            # Copy the file
-            shutil.copy2(src_file, dest_path)
-            print(f"[COPY] {src_file} -> {dest_path}")
-
+                
+            # Extract stroke number from filename (e.g., "stroke_1.mp4" -> 1)
+            match = re.match(r'stroke_(\d+)\.(\w+)', filename)
+            if match:
+                stroke_num = match.group(1)
+                file_ext = match.group(2)
+                
+                if stroke_num not in stroke_files:
+                    stroke_files[stroke_num] = []
+                    
+                stroke_files[stroke_num].append((filename, file_ext))
+        
+        # Process each stroke
+        for stroke_num, files in stroke_files.items():
+            # Create a stroke folder in the library
+            stroke_folder = os.path.join(FINAL_LIBRARY, f"stroke_{stroke_counter}")
+            os.makedirs(stroke_folder, exist_ok=True)
+            
+            # Copy and rename files for this stroke
+            for filename, file_ext in files:
+                src_file = os.path.join(clips_subfolder, filename)
+                
+                # Determine the new filename based on extension
+                if file_ext == "mp4":
+                    dest_filename = "stroke_clip.mp4"
+                elif file_ext == "csv":
+                    dest_filename = "stroke.csv"
+                else:
+                    continue  # Skip unrecognized files
+                    
+                dest_path = os.path.join(stroke_folder, dest_filename)
+                
+                if os.path.exists(dest_path) and not FORCE_REPROCESS:
+                    print(f"[SKIP] File already exists in Strokes Library: {dest_path}")
+                    continue
+                
+                # Copy the file
+                shutil.copy2(src_file, dest_path)
+                print(f"[COPY] {src_file} -> {dest_path}")
+                
+                # Now we need to generate the overlay and skeleton videos
+                if file_ext == "mp4":
+                    # Path to original video
+                    video_path = os.path.join(folder_path, f"{folder_name}.mp4")
+                    
+                    # TODO: This needs actual implementation to create overlay and skeleton videos
+                    # For now, we'll just create placeholders
+                    overlay_path = os.path.join(stroke_folder, "stroke_overlay.mp4")
+                    skeleton_path = os.path.join(stroke_folder, "stroke_skeleton.mp4")
+                    
+                    if not os.path.exists(overlay_path) or FORCE_REPROCESS:
+                        # In a real implementation, you would create the overlay video here
+                        shutil.copy2(src_file, overlay_path)
+                        print(f"[PLACEHOLDER] Created overlay video: {overlay_path}")
+                    
+                    if not os.path.exists(skeleton_path) or FORCE_REPROCESS:
+                        # In a real implementation, you would create the skeleton video here
+                        shutil.copy2(src_file, skeleton_path)
+                        print(f"[PLACEHOLDER] Created skeleton video: {skeleton_path}")
+            
+            # Increment the stroke counter for the next stroke
+            stroke_counter += 1
+    
     print(f"[DONE] All clips consolidated into: {FINAL_LIBRARY}")
     print("=== CLIP COLLECTION COMPLETE ===\n")
 
@@ -456,21 +512,28 @@ def time_normalize_csv(csv_path, out_path, num_frames):
 
 def run_time_normalization():
     """
-    For each CSV in the Final library, normalize its timeline.
+    For each stroke folder in the Strokes Library, normalize its CSV timeline.
     """
     print("\n=== TIME NORMALIZATION: Normalizing clip timelines ===")
     
-    # Scan the "Final library" folder for CSVs
-    for filename in os.listdir(FINAL_LIBRARY):
-        if not filename.lower().endswith(".csv") or filename.endswith(OUTPUT_SUFFIX):
+    # Scan all stroke folders in the Strokes Library
+    for folder_name in os.listdir(FINAL_LIBRARY):
+        if not folder_name.startswith("stroke_"):
             continue
             
-        csv_path = os.path.join(FINAL_LIBRARY, filename)
-        # Output name
-        base, ext = os.path.splitext(filename)
-        out_filename = base + OUTPUT_SUFFIX
-        out_path = os.path.join(FINAL_LIBRARY, out_filename)
-
+        folder_path = os.path.join(FINAL_LIBRARY, folder_name)
+        if not os.path.isdir(folder_path):
+            continue
+            
+        # Look for the stroke.csv file
+        csv_path = os.path.join(folder_path, "stroke.csv")
+        if not os.path.exists(csv_path):
+            print(f"[WARN] CSV file not found in {folder_path}. Skipping.")
+            continue
+            
+        # Output path
+        out_path = os.path.join(folder_path, "stroke_norm.csv")
+        
         # Time-normalize
         time_normalize_csv(csv_path, out_path, RESAMPLED_FRAMES)
     
@@ -485,7 +548,7 @@ def main():
     """
     print("=== POST-CUT PROCESSING PIPELINE ===")
     print(f"Base data directory: {BASE_DATA_DIR}")
-    print(f"Final library: {FINAL_LIBRARY}")
+    print(f"Strokes Library: {FINAL_LIBRARY}")
     print(f"FPS: {FPS}")
     print(f"Resampled frames: {RESAMPLED_FRAMES}")
     print(f"Force reprocess: {FORCE_REPROCESS}")
