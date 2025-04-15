@@ -48,15 +48,22 @@ STROKES_LIBRARY = "Strokes_Library"
 DATA_PROCESSED_DIR = os.path.join("data", "processed")
 
 # Visualization constants
-# MediaPipe Pose connections for skeleton drawing
-POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
-POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
-POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
-
 # Color configuration
 COLOR_LEFT = (255, 0, 0)  # Blue for left side
 COLOR_RIGHT = (0, 0, 255)  # Red for right side
 COLOR_CENTER = (0, 255, 0)  # Green for center
+
+# Define partial pose connections for color-coding
+POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
+POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
+POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
+
+# Full set of pose connections for complete skeleton visualization
+POSE_CONNECTIONS = [(0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8), (9, 10),
+                  (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
+                  (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20), (11, 23),
+                  (12, 24), (23, 24), (23, 25), (25, 27), (27, 29), (27, 31), (29, 31),
+                  (24, 26), (26, 28), (28, 30), (28, 32), (30, 32)]
 
 # Drawing configuration
 LINE_THICKNESS = 4
@@ -892,36 +899,28 @@ def manually_copy_clips_to_library(video_id):
         
         print(f"Creating stroke_{stroke_id} in {stroke_folder}")
         
-        # Copy MP4 if available
+        # Copy MP4 and CSV if available
+        clip_file_path = None
+        csv_file_path = None
+        
         if files['mp4']:
             src_file = os.path.join(clips_folder, files['mp4'])
             dest_file = os.path.join(stroke_folder, "stroke_clip.mp4")
             shutil.copy2(src_file, dest_file)
             print(f"Copied {files['mp4']} to {dest_file}")
-            
-            # Create overlay video (for now, just copy the clip)
-            # In a more advanced version, this would overlay landmarks
-            overlay_file = os.path.join(stroke_folder, "stroke_overlay.mp4")
-            shutil.copy2(src_file, overlay_file)
-            print(f"Created overlay video: {overlay_file}")
-            
-            # Create skeleton video (for now, just copy the clip)
-            # In a more advanced version, this would show just the skeleton
-            skeleton_file = os.path.join(stroke_folder, "stroke_skeleton.mp4")
-            shutil.copy2(src_file, skeleton_file)
-            print(f"Created skeleton video: {skeleton_file}")
+            clip_file_path = dest_file
             
             # Also create a "raw" version of the clip for reference
             raw_file = os.path.join(stroke_folder, "stroke_raw.mp4")
             shutil.copy2(src_file, raw_file)
             print(f"Created raw video: {raw_file}")
         
-        # Copy CSV if available
         if files['csv']:
             src_file = os.path.join(clips_folder, files['csv'])
             dest_file = os.path.join(stroke_folder, "stroke.csv")
             shutil.copy2(src_file, dest_file)
             print(f"Copied {files['csv']} to {dest_file}")
+            csv_file_path = dest_file
             
             # Create a normalized version by copying the clip-specific CSV
             norm_file = os.path.join(stroke_folder, "stroke_norm.csv")
@@ -933,6 +932,30 @@ def manually_copy_clips_to_library(video_id):
                 full_norm_file = os.path.join(stroke_folder, "stroke_full_norm.csv")
                 shutil.copy2(video_norm_csv, full_norm_file)
                 print(f"Added full normalized data: {full_norm_file}")
+        
+        # Create proper skeleton and overlay visualizations if we have both clip and CSV
+        if clip_file_path and csv_file_path:
+            overlay_output = os.path.join(stroke_folder, "stroke_overlay.mp4")
+            skeleton_output = os.path.join(stroke_folder, "stroke_skeleton.mp4")
+            
+            print(f"Creating pose visualizations for stroke_{stroke_id}...")
+            success = create_pose_visualizations(
+                clip_file_path, 
+                csv_file_path,
+                overlay_output,
+                skeleton_output
+            )
+            
+            if not success:
+                print(f"Failed to create visualizations. Creating simple copies instead.")
+                # Fallback to simple copies if visualization fails
+                if not os.path.exists(overlay_output):
+                    shutil.copy2(clip_file_path, overlay_output)
+                if not os.path.exists(skeleton_output):
+                    # Create a blank skeleton video - could be improved
+                    shutil.copy2(clip_file_path, skeleton_output)
+        else:
+            print(f"Missing clip or CSV file, cannot create visualizations")
         
         # Create source info file
         source_info_path = os.path.join(stroke_folder, "source_info.txt")
@@ -1004,6 +1027,209 @@ def main():
     print(f"Check the {STROKES_LIBRARY} directory for results.")
     
     return 0
+
+def load_landmarks_from_csv(csv_path):
+    """
+    Reads CSV, returns a list of dict: frames[i][lm_id] = (x, y) in [0..1].
+    Expects columns like 'lm_0_x', 'lm_0_y', etc.
+    """
+    frames = []
+    try:
+        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+
+            # Figure out which columns store each of the 33 landmarks
+            lm_xy = {}
+            for lm_id in range(33):
+                x_col = f"lm_{lm_id}_x"
+                y_col = f"lm_{lm_id}_y"
+                if x_col in header and y_col in header:
+                    x_idx = header.index(x_col)
+                    y_idx = header.index(y_col)
+                    lm_xy[lm_id] = (x_idx, y_idx)
+
+            for row in reader:
+                landm = {}
+                for lm_id in range(33):
+                    if lm_id in lm_xy:
+                        try:
+                            x_c, y_c = lm_xy[lm_id]
+                            x_val = float(row[x_c])
+                            y_val = float(row[y_c])
+                            landm[lm_id] = (x_val, y_val)
+                        except (ValueError, IndexError):
+                            landm[lm_id] = (0.0, 0.0)
+                    else:
+                        landm[lm_id] = (0.0, 0.0)
+                frames.append(landm)
+    except Exception as e:
+        print(f"Error loading landmarks from {csv_path}: {e}")
+        # Return an empty frame set to avoid crashing
+        return []
+        
+    return frames
+
+def draw_pose(frame_bgr, landmarks_dict, width, height):
+    """
+    Draws a color-coded skeleton with thicker lines and anti-aliasing.
+    """
+    # Center lines
+    for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
+        if lmA in landmarks_dict and lmB in landmarks_dict:
+            xA, yA = landmarks_dict[lmA]
+            xB, yB = landmarks_dict[lmB]
+            ptA = (int(xA * width), int(yA * height))
+            ptB = (int(xB * width), int(yB * height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Left edges
+    for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
+        if lmA in landmarks_dict and lmB in landmarks_dict:
+            xA, yA = landmarks_dict[lmA]
+            xB, yB = landmarks_dict[lmB]
+            ptA = (int(xA * width), int(yA * height))
+            ptB = (int(xB * width), int(yB * height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Right edges
+    for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
+        if lmA in landmarks_dict and lmB in landmarks_dict:
+            xA, yA = landmarks_dict[lmA]
+            xB, yB = landmarks_dict[lmB]
+            ptA = (int(xA * width), int(yA * height))
+            ptB = (int(xB * width), int(yB * height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+
+    # Keypoints
+    for lm_id in range(33):
+        if lm_id in landmarks_dict:
+            nx, ny = landmarks_dict[lm_id]
+            px = int(nx * width)
+            py = int(ny * height)
+            # color-coded by side
+            if lm_id in (11,13,15,23,25,27):
+                kp_color = COLOR_LEFT
+            elif lm_id in (12,14,16,24,26,28):
+                kp_color = COLOR_RIGHT
+            else:
+                kp_color = COLOR_CENTER
+
+            cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
+
+def draw_full_skeleton(frame_bgr, landmarks_dict, width, height, line_color=(0, 0, 255), point_color=(0, 255, 0)):
+    """
+    Draws a complete skeleton using the full set of MediaPipe pose connections.
+    
+    Args:
+        frame_bgr: OpenCV frame in BGR format
+        landmarks_dict: Dictionary mapping landmark IDs to (x, y) coordinates
+        width: Frame width
+        height: Frame height
+        line_color: Color for skeleton lines (BGR format)
+        point_color: Color for keypoints (BGR format)
+    """
+    # Draw all connections from the full skeleton definition
+    for (lmA, lmB) in POSE_CONNECTIONS:
+        if lmA in landmarks_dict and lmB in landmarks_dict:
+            xA, yA = landmarks_dict[lmA]
+            xB, yB = landmarks_dict[lmB]
+            ptA = (int(xA * width), int(yA * height))
+            ptB = (int(xB * width), int(yB * height))
+            cv2.line(frame_bgr, ptA, ptB, line_color, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+    
+    # Draw keypoints
+    for lm_id in range(33):
+        if lm_id in landmarks_dict:
+            nx, ny = landmarks_dict[lm_id]
+            px = int(nx * width)
+            py = int(ny * height)
+            cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, point_color, -1, lineType=LINE_TYPE)
+
+def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path):
+    """
+    Create overlay and skeleton visualizations of the pose.
+    
+    Args:
+        video_path: Path to the source video
+        csv_path: Path to the landmarks CSV file
+        overlay_path: Output path for overlay video (pose drawn on original)
+        skeleton_path: Output path for skeleton-only video (pose on black)
+        
+    Returns:
+        bool: Success or failure
+    """
+    try:
+        print(f"Creating pose visualizations for {os.path.basename(video_path)}")
+        
+        # Load landmarks
+        frames_landmarks = load_landmarks_from_csv(csv_path)
+        if not frames_landmarks:
+            print(f"Error: No landmarks found in {csv_path}")
+            return False
+            
+        # Open video
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Error: Could not open video: {video_path}")
+            return False
+            
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        print(f"Video: {width}x{height} at {fps}fps, {frame_count} frames")
+        print(f"Landmarks: {len(frames_landmarks)} frames")
+        
+        # Setup video writers
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        overlay_writer = cv2.VideoWriter(overlay_path, fourcc, fps, (width, height))
+        skeleton_writer = cv2.VideoWriter(skeleton_path, fourcc, fps, (width, height))
+        
+        # Process frames
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            # Create overlay video
+            if frame_idx < len(frames_landmarks):
+                overlay = frame.copy()
+                draw_pose(overlay, frames_landmarks[frame_idx], width, height)
+                overlay_writer.write(overlay)
+                
+                # Create skeleton video (black background)
+                skeleton = np.zeros((height, width, 3), dtype=np.uint8)
+                draw_full_skeleton(skeleton, frames_landmarks[frame_idx], width, height)
+                skeleton_writer.write(skeleton)
+            else:
+                # If we run out of landmarks, just copy the frame for overlay
+                # and write a black frame for skeleton
+                overlay_writer.write(frame)
+                skeleton = np.zeros((height, width, 3), dtype=np.uint8)
+                skeleton_writer.write(skeleton)
+            
+            # Show progress
+            frame_idx += 1
+            if frame_idx % 20 == 0:
+                print(f"Processing frame {frame_idx}/{frame_count} ({frame_idx/frame_count*100:.1f}%)", end="\r")
+        
+        # Clean up
+        cap.release()
+        overlay_writer.release()
+        skeleton_writer.release()
+        
+        print(f"\nSuccessfully created visualizations: {os.path.basename(overlay_path)}, {os.path.basename(skeleton_path)}")
+        return True
+        
+    except Exception as e:
+        import traceback
+        print(f"Error creating pose visualizations: {e}")
+        print(traceback.format_exc())
+        return False
 
 if __name__ == "__main__":
     sys.exit(main()) 
