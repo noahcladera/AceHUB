@@ -4,4 +4,4 @@ has_data_csv: True
 has_llc: True
 has_clips: False
 is_ready_for_clipping: True
-is_fully_processed: False
+is_fully_processed: True

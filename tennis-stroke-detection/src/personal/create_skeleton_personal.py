@@ -1,225 +1,250 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-process_single_clip_hardcoded.py
-
-Processes a single MP4 + optional CSV to produce up to three outputs:
-  1) _raw.mp4       (just re-encode)
-  2) _overlay.mp4   (raw + skeleton overlaid), if a CSV is provided
-  3) _skeleton.mp4  (skeleton on black), if a CSV is provided
-
-No folder scanning, no command-line args—just edit the paths below, run once.
-
-DEPENDENCIES:
-    pip install opencv-python numpy
-"""
-
 import os
 import cv2
-import csv
 import numpy as np
+import pandas as pd
+import subprocess
+import mediapipe as mp
+from typing import List, Dict, Tuple, Optional, Union
 
-###################################
-# USER SETTINGS (HARD-CODED)
-###################################
-VIDEO_PATH = "data/personal/Video Trimmer Cut Video.mp4"  # path to your .mp4
-CSV_PATH   = "data/personal/Video Trimmer Cut Video_data.csv"  # or None if you don't have landmarks
-DO_RAW      = False    # produce a _raw.mp4?
-DO_OVERLAY  = True    # produce an _overlay.mp4 (requires CSV)?
-DO_SKELETON = True    # produce a _skeleton.mp4 (requires CSV)?
+# Define paths
+VIDEO_PATH = "test_videos/test_video.mp4"
+CSV_PATH = "test_videos/test_landmarks.csv"
+OUTPUT_DIR = "output"
 
-# Skeleton config:
-POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
-POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
-POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
+# Drawing options
+CONNECTIONS = [(0, 1), (0, 4), (1, 2), (2, 3), (4, 5), (5, 6),
+               (0, 7), (7, 8), (8, 9), (9, 10), (7, 11), (11, 12), (12, 13),
+               (7, 14), (14, 15), (15, 16)]
+COLORS = [(245, 117, 16), (117, 245, 16), (16, 117, 245)]
 
-COLOR_LEFT = (255, 0, 0)    
-COLOR_RIGHT = (0, 0, 255)   
-COLOR_CENTER = (0, 255, 0)  
-LINE_THICKNESS = 4
-CIRCLE_RADIUS = 6
-LINE_TYPE = cv2.LINE_AA
-
-# If you want partial transparency in overlay mode, set ALPHA < 1.0 
-# e.g. ALPHA=0.7 => 70% raw, 30% skeleton
-ALPHA = 1.0  
-
-###################################
-# HELPER FUNCTIONS
-###################################
-def load_landmarks(csv_path):
+def convert_video_to_mp4(input_path: str) -> str:
     """
-    Reads CSV, returns a list of dict: frames[i][lm_id] = (x, y) in [0..1].
-    Expects columns like 'lm_0_x', 'lm_0_y', etc.
+    Convert video to MP4 format if it's not already in MP4 format
+    
+    Args:
+        input_path (str): Path to the input video file
+        
+    Returns:
+        str: Path to the MP4 video file
     """
-    frames = []
-    with open(csv_path, "r", newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader)
+    # If the file is already MP4, return the path
+    if input_path.lower().endswith(".mp4"):
+        return input_path
+        
+    # Create output path with .mp4 extension
+    base_name = os.path.splitext(input_path)[0]
+    output_path = f"{base_name}.mp4"
+    
+    # Check if output file already exists
+    if os.path.exists(output_path):
+        print(f"MP4 version already exists at {output_path}")
+        return output_path
+    
+    print(f"Converting {input_path} to MP4 format...")
+    # Convert the video using ffmpeg
+    try:
+        subprocess.run([
+            "ffmpeg", "-i", input_path, 
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            output_path
+        ], check=True)
+        print(f"Conversion complete: {output_path}")
+        return output_path
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting video: {e}")
+        return input_path  # Return original path if conversion fails
 
-        # Figure out which columns store each of the 33 landmarks
-        lm_xy = {}
-        for lm_id in range(33):
-            x_col = f"lm_{lm_id}_x"
-            y_col = f"lm_{lm_id}_y"
-            if x_col in header and y_col in header:
-                x_idx = header.index(x_col)
-                y_idx = header.index(y_col)
-                lm_xy[lm_id] = (x_idx, y_idx)
-
-        for row in reader:
-            landm = {}
-            for lm_id in range(33):
-                if lm_id in lm_xy:
-                    x_c, y_c = lm_xy[lm_id]
-                    x_val = float(row[x_c])
-                    y_val = float(row[y_c])
-                    landm[lm_id] = (x_val, y_val)
-                else:
-                    landm[lm_id] = (0.0, 0.0)
-            frames.append(landm)
-    return frames
-
-def draw_pretty_skeleton(frame_bgr, landmarks_dict, width, height):
+def load_landmarks_from_csv(csv_path: str) -> Dict[int, List[List[float]]]:
     """
-    Draws a color-coded skeleton with thicker lines and anti-aliasing.
+    Load landmarks from a CSV file
+    
+    Args:
+        csv_path (str): Path to the CSV file
+        
+    Returns:
+        Dict[int, List[List[float]]]: Dictionary of landmarks for each frame
     """
-    # Center lines
-    for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
-        xA, yA = landmarks_dict[lmA]
-        xB, yB = landmarks_dict[lmB]
-        ptA = (int(xA * width), int(yA * height))
-        ptB = (int(xB * width), int(yB * height))
-        cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+    data = pd.read_csv(csv_path)
+    landmarks_by_frame = {}
+    
+    for _, row in data.iterrows():
+        frame_idx = int(row['frame_idx'])
+        landmarks = []
+        
+        for i in range(33):  # 33 landmarks in MediaPipe Pose
+            x = row[f'x_{i}']
+            y = row[f'y_{i}']
+            z = row[f'z_{i}']
+            landmarks.append([x, y, z])
+        
+        landmarks_by_frame[frame_idx] = landmarks
+    
+    return landmarks_by_frame
 
-    # Left edges
-    for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
-        xA, yA = landmarks_dict[lmA]
-        xB, yB = landmarks_dict[lmB]
-        ptA = (int(xA * width), int(yA * height))
-        ptB = (int(xB * width), int(yB * height))
-        cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-
-    # Right edges
-    for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
-        xA, yA = landmarks_dict[lmA]
-        xB, yB = landmarks_dict[lmB]
-        ptA = (int(xA * width), int(yA * height))
-        ptB = (int(xB * width), int(yB * height))
-        cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-
-    # Keypoints
-    for lm_id in range(33):
-        nx, ny = landmarks_dict[lm_id]
-        px = int(nx * width)
-        py = int(ny * height)
-        # color-coded by side
-        if lm_id in (11,13,15,23,25,27):
-            kp_color = COLOR_LEFT
-        elif lm_id in (12,14,16,24,26,28):
-            kp_color = COLOR_RIGHT
-        else:
-            kp_color = COLOR_CENTER
-
-        cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
-
-def process_mp4(video_path, csv_path, mode="raw"):
+def draw_landmarks_on_frame(
+    frame: np.ndarray, 
+    landmarks: List[List[float]],
+    connections: List[Tuple[int, int]] = CONNECTIONS,
+    colors: List[Tuple[int, int, int]] = COLORS
+) -> np.ndarray:
     """
-    - "raw": re-encode video as is
-    - "overlay": draws skeleton over raw
-    - "skeleton": draws skeleton on black
-    If output file exists, skip it.
-    Returns out_path or None if skipping.
+    Draw landmarks and connections on a frame
+    
+    Args:
+        frame (np.ndarray): Input frame
+        landmarks (List[List[float]]): List of landmarks
+        connections (List[Tuple[int, int]]): List of connections between landmarks
+        colors (List[Tuple[int, int, int]]): List of colors
+        
+    Returns:
+        np.ndarray: Frame with landmarks and connections
     """
-    base = os.path.splitext(os.path.basename(video_path))[0]
-    folder = os.path.dirname(video_path)
-    suffix = f"_{mode}.mp4"
-    out_name = base + suffix
-    out_path = os.path.join(folder, out_name)
+    h, w, _ = frame.shape
+    
+    # Draw landmarks
+    for landmark in landmarks:
+        x, y = int(landmark[0] * w), int(landmark[1] * h)
+        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+    
+    # Draw connections
+    for i, connection in enumerate(connections):
+        start_idx, end_idx = connection
+        if start_idx < len(landmarks) and end_idx < len(landmarks):
+            start = landmarks[start_idx]
+            end = landmarks[end_idx]
+            
+            start_point = (int(start[0] * w), int(start[1] * h))
+            end_point = (int(end[0] * w), int(end[1] * h))
+            
+            color = colors[i % len(colors)]
+            cv2.line(frame, start_point, end_point, color, 2)
+    
+    return frame
 
-    # If file already exists, skip
-    if os.path.isfile(out_path):
-        print(f"[SKIP] {out_name} exists. Not overwriting.")
-        return None
-
+def process_mp4(
+    video_path: str, 
+    csv_path: Optional[str] = None, 
+    output_dir: str = OUTPUT_DIR, 
+    connections: List[Tuple[int, int]] = CONNECTIONS,
+    colors: List[Tuple[int, int, int]] = COLORS
+) -> Tuple[str, str, str]:
+    """
+    Process an MP4 file and create three videos:
+    1. Raw video
+    2. Overlay video with skeleton
+    3. Skeleton video (black background)
+    
+    Args:
+        video_path (str): Path to the input video
+        csv_path (Optional[str]): Path to the CSV file with landmarks
+        output_dir (str): Directory to save the output videos
+        connections (List[Tuple[int, int]]): List of connections between landmarks
+        colors (List[Tuple[int, int, int]]): List of colors
+        
+    Returns:
+        Tuple[str, str, str]: Paths to raw, overlay and skeleton videos
+    """
+    # Ensure video is in MP4 format
+    video_path = convert_video_to_mp4(video_path)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get video filename without extension
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    
+    # Create output paths
+    raw_path = os.path.join(output_dir, f"{video_name}_raw.mp4")
+    overlay_path = os.path.join(output_dir, f"{video_name}_overlay.mp4")
+    skeleton_path = os.path.join(output_dir, f"{video_name}_skeleton.mp4")
+    
+    # Open video
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"[ERROR] Could not open {video_path}")
-        return None
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
+        raise ValueError(f"Could not open video: {video_path}")
+    
+    # Get video properties
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-
-    print(f"[INFO] Creating => {out_path} (mode={mode})")
-
-    # load CSV if needed
-    frames_landmarks = []
-    if mode in ["overlay","skeleton"] and csv_path is not None:
-        if not os.path.isfile(csv_path):
-            print(f"[WARN] CSV not found: {csv_path}, skipping {mode}")
-            cap.release()
-            out.release()
-            os.remove(out_path)  # remove partial
-            return None
-        frames_landmarks = load_landmarks(csv_path)
-        print(f"[INFO] Found {len(frames_landmarks)} frames in {csv_path}")
-
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Create video writers
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    raw_writer = cv2.VideoWriter(raw_path, fourcc, fps, (width, height))
+    overlay_writer = cv2.VideoWriter(overlay_path, fourcc, fps, (width, height))
+    skeleton_writer = cv2.VideoWriter(skeleton_path, fourcc, fps, (width, height))
+    
+    # Load landmarks from CSV if provided
+    landmarks_by_frame = {}
+    if csv_path:
+        landmarks_by_frame = load_landmarks_from_csv(csv_path)
+    
+    # MediaPipe pose detector (as fallback if CSV not provided)
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(static_image_mode=False, model_complexity=2, 
+                        smooth_landmarks=True, min_detection_confidence=0.5, 
+                        min_tracking_confidence=0.5)
+    
     frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
-        if mode == "raw":
-            # just copy frames
-            out.write(frame)
-
-        elif mode == "skeleton":
-            # black background
-            black_img = np.zeros((height, width, 3), dtype=np.uint8)
-            if frame_idx < len(frames_landmarks):
-                draw_pretty_skeleton(black_img, frames_landmarks[frame_idx], width, height)
-            out.write(black_img)
-
-        elif mode == "overlay":
-            if frame_idx < len(frames_landmarks):
-                if ALPHA < 1.0:
-                    overlay = frame.copy()
-                    draw_pretty_skeleton(overlay, frames_landmarks[frame_idx], width, height)
-                    blend_factor = 1.0 - ALPHA
-                    cv2.addWeighted(overlay, blend_factor, frame, ALPHA, 0, frame)
-                else:
-                    draw_pretty_skeleton(frame, frames_landmarks[frame_idx], width, height)
-            out.write(frame)
-
+        
+        # Copy frame for raw video
+        raw_frame = frame.copy()
+        
+        # Create overlay video frame
+        overlay_frame = frame.copy()
+        
+        # Create skeleton video frame (black background)
+        skeleton_frame = np.zeros_like(frame)
+        
+        # Get landmarks for the current frame
+        if frame_idx in landmarks_by_frame:
+            # Use landmarks from CSV
+            landmarks = landmarks_by_frame[frame_idx]
+        else:
+            # Use MediaPipe to detect landmarks
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(rgb_frame)
+            
+            if results.pose_landmarks:
+                landmarks = []
+                for landmark in results.pose_landmarks.landmark:
+                    landmarks.append([landmark.x, landmark.y, landmark.z])
+            else:
+                landmarks = []
+        
+        # Draw landmarks on frames if available
+        if landmarks:
+            overlay_frame = draw_landmarks_on_frame(overlay_frame, landmarks, connections, colors)
+            skeleton_frame = draw_landmarks_on_frame(skeleton_frame, landmarks, connections, colors)
+        
+        # Write frames to output videos
+        raw_writer.write(raw_frame)
+        overlay_writer.write(overlay_frame)
+        skeleton_writer.write(skeleton_frame)
+        
         frame_idx += 1
-
+        
+        # Print progress
+        if frame_idx % 30 == 0:
+            progress = (frame_idx / frame_count) * 100
+            print(f"Progress: {progress:.2f}% ({frame_idx}/{frame_count})")
+    
+    # Release resources
     cap.release()
-    out.release()
-    print(f"[DONE] => {out_path}\n")
-    return out_path
-
-def main():
-    # 1) Check if video file exists
-    if not os.path.isfile(VIDEO_PATH):
-        print(f"[ERROR] Video not found: {VIDEO_PATH}")
-        return
-
-    # 2) RAW
-    if DO_RAW:
-        process_mp4(VIDEO_PATH, csv_path=None, mode="raw")
-
-    # 3) OVERLAY
-    if DO_OVERLAY and CSV_PATH is not None:
-        process_mp4(VIDEO_PATH, csv_path=CSV_PATH, mode="overlay")
-
-    # 4) SKELETON
-    if DO_SKELETON and CSV_PATH is not None:
-        process_mp4(VIDEO_PATH, csv_path=CSV_PATH, mode="skeleton")
+    raw_writer.release()
+    overlay_writer.release()
+    skeleton_writer.release()
+    
+    return raw_path, overlay_path, skeleton_path
 
 if __name__ == "__main__":
-    main()
+    raw, overlay, skeleton = process_mp4(VIDEO_PATH, CSV_PATH)
+    print(f"Raw video: {raw}")
+    print(f"Overlay video: {overlay}")
+    print(f"Skeleton video: {skeleton}") 

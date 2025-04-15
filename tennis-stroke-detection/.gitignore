@@ -100,3 +100,14 @@ Thumbs.db
 temp/
 .temp/
 inference_results/
+# Video files
+*.mov
+*.mp4
+*.MOV
+*.MP4
+*.avi
+*.AVI
+*.mpg
+*.MPG
+*.mpeg
+*.MPEG

@@ -1,0 +1,2 @@
+Source Video: video_64
+Stroke Number in Video: 27
