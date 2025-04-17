@@ -1004,6 +1004,25 @@ def main():
         
         if success:
             processed_count += 1
+            
+            # Copy the processed video to videos library
+            video_filename = f"video_{current_video_id}.mp4"
+            videos_lib_path = os.path.join(VIDEOS_DIR, f"video_{current_video_id}", video_filename)
+            
+            # Ensure the video directory exists in the videos library
+            video_dir = os.path.dirname(videos_lib_path)
+            ensure_directory_exists(video_dir)
+            
+            try:
+                # Copy the video file if it doesn't already exist in the videos library
+                if not os.path.exists(videos_lib_path):
+                    shutil.copy2(video_path, videos_lib_path)
+                    print(f"Copied video to videos library: {videos_lib_path}")
+                else:
+                    print(f"Video already exists in videos library: {videos_lib_path}")
+            except Exception as e:
+                print(f"Warning: Could not copy video to videos library: {e}")
+            
             # Move processed files to an "archive" subfolder
             archive_dir = os.path.join(UNPROCESSED_DIR, "archive")
             ensure_directory_exists(archive_dir)
@@ -1030,8 +1049,8 @@ def main():
 
 def load_landmarks_from_csv(csv_path):
     """
-    Reads CSV, returns a list of dict: frames[i][lm_id] = (x, y) in [0..1].
-    Expects columns like 'lm_0_x', 'lm_0_y', etc.
+    Reads the CSV and returns a list of dict frames[i][lm_id] = (x, y) in [0..1].
+    We assume columns named 'lm_0_x', 'lm_0_y', etc.
     """
     frames = []
     try:
@@ -1039,14 +1058,14 @@ def load_landmarks_from_csv(csv_path):
             reader = csv.reader(f)
             header = next(reader)
 
-            # Figure out which columns store each of the 33 landmarks
+            # Identify columns for each landmark
             lm_xy = {}
             for lm_id in range(33):
-                x_col = f"lm_{lm_id}_x"
-                y_col = f"lm_{lm_id}_y"
-                if x_col in header and y_col in header:
-                    x_idx = header.index(x_col)
-                    y_idx = header.index(y_col)
+                x_col_name = f"lm_{lm_id}_x"
+                y_col_name = f"lm_{lm_id}_y"
+                if x_col_name in header and y_col_name in header:
+                    x_idx = header.index(x_col_name)
+                    y_idx = header.index(y_col_name)
                     lm_xy[lm_id] = (x_idx, y_idx)
 
             for row in reader:
@@ -1072,42 +1091,46 @@ def load_landmarks_from_csv(csv_path):
 
 def draw_pose(frame_bgr, landmarks_dict, width, height):
     """
-    Draws a color-coded skeleton with thicker lines and anti-aliasing.
+    Draw a color-coded skeleton with thicker lines and anti-aliasing.
+    Blue (left), Red (right), Green (center).
     """
-    # Center lines
+    # Draw center lines
     for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
         if lmA in landmarks_dict and lmB in landmarks_dict:
             xA, yA = landmarks_dict[lmA]
             xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA * width), int(yA * height))
-            ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            ptA = (int(xA*width), int(yA*height))
+            ptB = (int(xB*width), int(yB*height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER,
+                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
 
     # Left edges
     for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
         if lmA in landmarks_dict and lmB in landmarks_dict:
             xA, yA = landmarks_dict[lmA]
             xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA * width), int(yA * height))
-            ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            ptA = (int(xA*width), int(yA*height))
+            ptB = (int(xB*width), int(yB*height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT,
+                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
 
     # Right edges
     for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
         if lmA in landmarks_dict and lmB in landmarks_dict:
             xA, yA = landmarks_dict[lmA]
             xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA * width), int(yA * height))
-            ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            ptA = (int(xA*width), int(yA*height))
+            ptB = (int(xB*width), int(yB*height))
+            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT,
+                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
 
     # Keypoints
     for lm_id in range(33):
         if lm_id in landmarks_dict:
             nx, ny = landmarks_dict[lm_id]
-            px = int(nx * width)
-            py = int(ny * height)
-            # color-coded by side
+            px = int(nx*width)
+            py = int(ny*height)
+            # color-coded keypoints or center color
             if lm_id in (11,13,15,23,25,27):
                 kp_color = COLOR_LEFT
             elif lm_id in (12,14,16,24,26,28):
@@ -1117,34 +1140,8 @@ def draw_pose(frame_bgr, landmarks_dict, width, height):
 
             cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
 
-def draw_full_skeleton(frame_bgr, landmarks_dict, width, height, line_color=(0, 0, 255), point_color=(0, 255, 0)):
-    """
-    Draws a complete skeleton using the full set of MediaPipe pose connections.
-    
-    Args:
-        frame_bgr: OpenCV frame in BGR format
-        landmarks_dict: Dictionary mapping landmark IDs to (x, y) coordinates
-        width: Frame width
-        height: Frame height
-        line_color: Color for skeleton lines (BGR format)
-        point_color: Color for keypoints (BGR format)
-    """
-    # Draw all connections from the full skeleton definition
-    for (lmA, lmB) in POSE_CONNECTIONS:
-        if lmA in landmarks_dict and lmB in landmarks_dict:
-            xA, yA = landmarks_dict[lmA]
-            xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA * width), int(yA * height))
-            ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, line_color, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-    
-    # Draw keypoints
-    for lm_id in range(33):
-        if lm_id in landmarks_dict:
-            nx, ny = landmarks_dict[lm_id]
-            px = int(nx * width)
-            py = int(ny * height)
-            cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, point_color, -1, lineType=LINE_TYPE)
+# Use draw_pose for draw_full_skeleton for compatibility
+draw_full_skeleton = draw_pose
 
 def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path):
     """
@@ -1162,24 +1159,34 @@ def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path
     try:
         print(f"Creating pose visualizations for {os.path.basename(video_path)}")
         
-        # Load landmarks
-        frames_landmarks = load_landmarks_from_csv(csv_path)
-        if not frames_landmarks:
-            print(f"Error: No landmarks found in {csv_path}")
-            return False
+        # Skip if output files already exist
+        if os.path.isfile(overlay_path) and os.path.isfile(skeleton_path):
+            print(f"[SKIP] Output files already exist. Not overwriting.")
+            return True
             
-        # Open video
+        # Load video
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"Error: Could not open video: {video_path}")
+            print(f"[ERROR] Cannot open {video_path}")
             return False
-            
-        # Get video properties
+
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
+        # Load landmarks from CSV
+        if not os.path.isfile(csv_path):
+            print(f"[WARN] No CSV found: {csv_path}")
+            cap.release()
+            return False
+            
+        frames_landmarks = load_landmarks_from_csv(csv_path)
+        if not frames_landmarks:
+            print(f"[ERROR] No landmarks found in {csv_path}")
+            cap.release()
+            return False
+            
         print(f"Video: {width}x{height} at {fps}fps, {frame_count} frames")
         print(f"Landmarks: {len(frames_landmarks)} frames")
         
@@ -1197,13 +1204,14 @@ def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path
                 
             # Create overlay video
             if frame_idx < len(frames_landmarks):
+                # Overlay mode
                 overlay = frame.copy()
                 draw_pose(overlay, frames_landmarks[frame_idx], width, height)
                 overlay_writer.write(overlay)
                 
-                # Create skeleton video (black background)
+                # Skeleton mode (black background)
                 skeleton = np.zeros((height, width, 3), dtype=np.uint8)
-                draw_full_skeleton(skeleton, frames_landmarks[frame_idx], width, height)
+                draw_pose(skeleton, frames_landmarks[frame_idx], width, height)
                 skeleton_writer.write(skeleton)
             else:
                 # If we run out of landmarks, just copy the frame for overlay
@@ -1222,14 +1230,15 @@ def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path
         overlay_writer.release()
         skeleton_writer.release()
         
-        print(f"\nSuccessfully created visualizations: {os.path.basename(overlay_path)}, {os.path.basename(skeleton_path)}")
+        print(f"\n[DONE] Created visualizations: {os.path.basename(overlay_path)}, {os.path.basename(skeleton_path)}")
         return True
         
     except Exception as e:
         import traceback
-        print(f"Error creating pose visualizations: {e}")
+        print(f"[ERROR] Creating pose visualizations: {e}")
         print(traceback.format_exc())
         return False
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    exit_code = main()
+    sys.exit(exit_code) 

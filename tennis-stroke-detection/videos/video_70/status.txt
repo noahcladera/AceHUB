@@ -1,7 +1,7 @@
-has_video: True
-has_normalized_csv: True
-has_data_csv: True
+original_filename: video_70.mp4
+processed_date: 2025-04-15 21:54:21
+has_raw_data: True
+has_normalized_data: True
 has_llc: True
-has_clips: False
 is_ready_for_clipping: True
 is_fully_processed: True
