@@ -1,0 +1,7 @@
+original_filename: video_29.mp4
+processed_date: 2025-04-18 16:42:09
+has_raw_data: True
+has_normalized_data: True
+has_llc: True
+is_ready_for_clipping: True
+is_fully_processed: True

@@ -1,0 +1,7 @@
+original_filename: DSC_5228.MOV
+processed_date: 2025-04-18 17:41:19
+has_raw_data: False
+has_normalized_data: False
+has_llc: True
+is_ready_for_clipping: True
+is_fully_processed: False

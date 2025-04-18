@@ -1,2 +1,2 @@
 Source Video: video_1
-Stroke Number in Video: 39
+Stroke Number in Video: 53

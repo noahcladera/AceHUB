@@ -1,4 +1,2 @@
-Source Video: video_70
-Stroke Number in Video: 19
-Manually copied by tennis_video_processor.py
-Created: 2025-04-15 21:55:00
+Source Video: video_39
+Stroke Number in Video: 22

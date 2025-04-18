@@ -40,6 +40,10 @@ import time
 import math
 import json
 import re
+from collections import namedtuple
+import matplotlib.pyplot as plt
+from datetime import datetime
+from pathlib import Path
 
 # Directory constants
 UNPROCESSED_DIR = "unprocessed_videos"
@@ -53,17 +57,30 @@ COLOR_LEFT = (255, 0, 0)  # Blue for left side
 COLOR_RIGHT = (0, 0, 255)  # Red for right side
 COLOR_CENTER = (0, 255, 0)  # Green for center
 
-# Define partial pose connections for color-coding
-POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
-POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
-POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
+# Define MediaPipe Pose landmarks connection constants
+# For color-coded skeleton drawing
+POSE_CONNECTIONS_CENTER = [
+    (11, 12),  # Shoulders
+    (23, 24),  # Hips
+    (11, 23),  # Left torso
+    (12, 24),  # Right torso
+]
 
-# Full set of pose connections for complete skeleton visualization
-POSE_CONNECTIONS = [(0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8), (9, 10),
-                  (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
-                  (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20), (11, 23),
-                  (12, 24), (23, 24), (23, 25), (25, 27), (27, 29), (27, 31), (29, 31),
-                  (24, 26), (26, 28), (28, 30), (28, 32), (30, 32)]
+POSE_CONNECTIONS_LEFT = [
+    (11, 13),  # Left shoulder to left elbow
+    (13, 15),  # Left elbow to left wrist
+    (23, 25),  # Left hip to left knee
+    (25, 27),  # Left knee to left ankle
+    (27, 31),  # Left ankle to left foot
+]
+
+POSE_CONNECTIONS_RIGHT = [
+    (12, 14),  # Right shoulder to right elbow
+    (14, 16),  # Right elbow to right wrist 
+    (24, 26),  # Right hip to right knee
+    (26, 28),  # Right knee to right ankle
+    (28, 32),  # Right ankle to right foot
+]
 
 # Drawing configuration
 LINE_THICKNESS = 4
@@ -171,83 +188,121 @@ def convert_video_to_mp4(input_path, output_path):
 
 def extract_pose_data(video_path, output_csv):
     """
-    Extract pose landmarks from video using MediaPipe.
-    """
-    print(f"[STEP 1/6] Extracting pose data from {os.path.basename(video_path)}")
+    Extract MediaPipe pose data from a video and save as CSV.
     
+    Args:
+        video_path: Path to the video
+        output_csv: Output CSV file path
+        
+    Returns:
+        bool: Success or failure
+    """
+    if os.path.isfile(output_csv):
+        print(f"[SKIP] {output_csv} exists. Not overwriting.")
+        return True
+        
+    print(f"[INFO] Extracting pose data from {os.path.basename(video_path)} to {os.path.basename(output_csv)}")
+    
+    # Initialize MediaPipe Pose
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(
         static_image_mode=False,
-        model_complexity=2,
+        model_complexity=1,  # 0=Lite, 1=Full, 2=Heavy
         smooth_landmarks=True,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
     )
-
+    
+    # Open video
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        raise ValueError(f"Could not open video file: {video_path}")
-
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"[ERROR] Cannot open {video_path}")
+        return False
+    
+    # Get video properties
     fps = cap.get(cv2.CAP_PROP_FPS)
-    print(f"Video has {frame_count} frames at {fps} FPS")
-
-    # Create output directory if needed
-    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
-
-    with open(output_csv, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        # Build header
-        header = ["frame_index"]
-        for i in range(33):
-            header += [f"lm_{i}_x", f"lm_{i}_y", f"lm_{i}_z", f"lm_{i}_vis"]
-        # Add angles
-        header += ["right_elbow_angle", "left_elbow_angle"]
-        writer.writerow(header)
-
-        frame_index = 0
-        processed_frames = 0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # CSV header
+    header = ["frame_index"]
+    for lm in range(33):  # MediaPipe has 33 pose landmarks
+        header.extend([f"lm_{lm}_x", f"lm_{lm}_y", f"lm_{lm}_z", f"lm_{lm}_vis"])
+    header.extend(["right_elbow_angle", "left_elbow_angle"]) 
+    
+    # Process video
+    all_frames = []
+    frame_idx = 0
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(frame_rgb)
-            
-            if results.pose_landmarks:
-                row = [frame_index]
-                landmarks = results.pose_landmarks.landmark
+        # Convert to RGB for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = pose.process(frame_rgb)
+        
+        # Initialize row with zeros
+        row = [frame_idx]
+        for _ in range(33):
+            row.extend([0.0, 0.0, 0.0, 0.0])  # x, y, z, visibility
+        row.extend([0.0, 0.0])  # right_elbow_angle, left_elbow_angle
+        
+        # If pose detected, fill in the landmark data
+        if results.pose_landmarks:
+            for lm_idx, landmark in enumerate(results.pose_landmarks.landmark):
+                idx = 1 + lm_idx * 4  # Position in row for this landmark
+                row[idx] = landmark.x
+                row[idx+1] = landmark.y
+                row[idx+2] = landmark.z
+                row[idx+3] = landmark.visibility
                 
-                for lm in landmarks:
-                    row += [lm.x, lm.y, lm.z, lm.visibility]
-
-                # Calculate elbow angles
-                r_shoulder, r_elbow, r_wrist = landmarks[12], landmarks[14], landmarks[16]
-                l_shoulder, l_elbow, l_wrist = landmarks[11], landmarks[13], landmarks[15]
-
-                r_angle = calculate_angle(r_shoulder.x, r_shoulder.y,
-                                        r_elbow.x, r_elbow.y,
-                                        r_wrist.x, r_wrist.y)
-                l_angle = calculate_angle(l_shoulder.x, l_shoulder.y,
-                                        l_elbow.x, l_elbow.y,
-                                        l_wrist.x, l_wrist.y)
-                row += [r_angle, l_angle]
+            # Calculate elbow angles if landmarks are available
+            # Right elbow (shoulder-12, elbow-14, wrist-16)
+            if all(lm_id in [12, 14, 16] for lm_id in [12, 14, 16]):
+                shoulder = results.pose_landmarks.landmark[12]
+                elbow = results.pose_landmarks.landmark[14]
+                wrist = results.pose_landmarks.landmark[16]
+                right_angle = calculate_angle(
+                    shoulder.x, shoulder.y,
+                    elbow.x, elbow.y,
+                    wrist.x, wrist.y
+                )
+                row[-2] = right_angle
                 
-                writer.writerow(row)
-                processed_frames += 1
-            
-            # Show progress
-            frame_index += 1
-            if frame_index % 30 == 0:
-                pct = (frame_index / frame_count) * 100
-                print(f"Processing: {frame_index}/{frame_count} frames ({pct:.1f}%)", end="\r")
-
+            # Left elbow (shoulder-11, elbow-13, wrist-15)
+            if all(lm_id in [11, 13, 15] for lm_id in [11, 13, 15]):
+                shoulder = results.pose_landmarks.landmark[11]
+                elbow = results.pose_landmarks.landmark[13]
+                wrist = results.pose_landmarks.landmark[15]
+                left_angle = calculate_angle(
+                    shoulder.x, shoulder.y,
+                    elbow.x, elbow.y,
+                    wrist.x, wrist.y
+                )
+                row[-1] = left_angle
+        
+        all_frames.append(row)
+        
+        # Update progress
+        frame_idx += 1
+        if frame_idx % 30 == 0:  # Update every 30 frames
+            percent = (frame_idx / frame_count) * 100
+            print(f"[INFO] Progress: {frame_idx}/{frame_count} frames ({percent:.1f}%)", end="\r")
+    
+    # Release resources
     cap.release()
-    print(f"\nProcessed {processed_frames} frames with valid pose data")
-    print(f"[DONE] Pose data saved to {output_csv}")
-    return processed_frames > 0
+    pose.close()
+    
+    # Save to CSV
+    try:
+        df = pd.DataFrame(all_frames, columns=header)
+        df.to_csv(output_csv, index=False)
+        print(f"\n[DONE] Saved {len(all_frames)} frames to {output_csv}")
+        return True
+    except Exception as e:
+        print(f"\n[ERROR] Failed to save CSV: {e}")
+        return False
 
 def calculate_angle(ax, ay, bx, by, cx, cy):
     """
@@ -648,189 +703,69 @@ def create_animated_pose_figure(x_coords, y_coords, z_coords, vis_scores):
     )
     return fig
 
-def process_video(video_path, llc_path, video_id=None):
+def process_video(video_path, output_dir=None, stroke_extraction=True, create_overlay=True, create_skeleton=True):
     """
-    Process a single video and its LLC file.
+    Process a tennis video to extract pose data and optionally create skeleton videos.
     
     Args:
-        video_path: Path to the video file
-        llc_path: Path to the LLC file
-        video_id: Optional video ID, if not provided will be auto-assigned
-    
+        video_path: Path to the input video
+        output_dir: Output directory (defaults to same dir as video)
+        stroke_extraction: Whether to extract stroke data
+        create_overlay: Whether to create overlay video
+        create_skeleton: Whether to create skeleton video
+        
     Returns:
-        True if processing was successful, False otherwise
+        bool: Success or failure
     """
-    try:
-        print(f"\n=== PROCESSING VIDEO: {os.path.basename(video_path)} ===")
-        print(f"LLC File: {os.path.basename(llc_path)}")
-        
-        # Validate inputs
-        if not os.path.exists(video_path):
-            print(f"Error: Video file not found: {video_path}")
-            return False
-        
-        if not os.path.exists(llc_path):
-            print(f"Error: LLC file not found: {llc_path}")
-            return False
-        
-        # Check if LLC file has valid annotations
-        print("Checking LLC file for valid annotations...")
-        if not check_llc_file(llc_path):
-            print(f"Error: LLC file has no valid stroke annotations: {llc_path}")
-            return False
-        
-        # Get video basename without extension
-        video_basename = os.path.splitext(os.path.basename(video_path))[0]
-        video_ext = os.path.splitext(os.path.basename(video_path))[1].lower()
-        print(f"Video basename: {video_basename}, extension: {video_ext}")
-        
-        # Create temporary work directory
-        temp_dir = os.path.join(UNPROCESSED_DIR, f"{video_basename}_temp")
-        ensure_directory_exists(temp_dir)
-        print(f"Created temporary directory: {temp_dir}")
-        
-        # Define output paths
-        data_csv = os.path.join(temp_dir, f"{video_basename}_data.csv")
-        norm_csv = os.path.join(temp_dir, f"{video_basename}_normalized.csv")
-        
-        # Get video ID if not provided
-        if video_id is None:
-            video_id = get_next_video_id()
-        
-        print(f"Using video ID: {video_id}")
-        
-        # Step 1: Extract pose data - directly from original for better quality
-        print(f"[STEP 1/6] Extracting pose data - STARTING")
-        if not extract_pose_data(video_path, data_csv):
-            print("Error extracting pose data. Exiting.")
-            return False
-        print(f"[STEP 1/6] Extracting pose data - COMPLETED")
-        
-        # Convert MOV to MP4 if needed (after pose extraction)
-        processed_video_path = video_path
-        if video_ext.lower() != '.mp4':
-            print(f"Video is in {video_ext} format, converting to MP4...")
-            mp4_path = os.path.join(temp_dir, f"{video_basename}.mp4")
-            if not convert_video_to_mp4(video_path, mp4_path):
-                print("Failed to convert video. Make sure ffmpeg is installed.")
-                return False
-            # Use the converted MP4 file for the remaining processing
-            processed_video_path = mp4_path
-            print(f"Using converted video for further processing: {processed_video_path}")
-        
-        # Step 2: Normalize pose data
-        print(f"[STEP 2/6] Normalizing pose data - STARTING")
-        if not normalize_pose_data(data_csv, norm_csv):
-            print("Error normalizing pose data. Exiting.")
-            return False
-        print(f"[STEP 2/6] Normalizing pose data - COMPLETED")
-        
-        # Step 3: Set up for pipeline
-        print(f"[STEP 3/6] Setting up for pipeline - STARTING")
-        target_llc = setup_for_pipeline(processed_video_path, data_csv, norm_csv, llc_path, video_id)
-        print(f"[STEP 3/6] Setting up for pipeline - COMPLETED")
-        
-        # Verify setup worked correctly
-        video_dir_videos = os.path.join(VIDEOS_DIR, f"video_{video_id}")
-        print(f"Verifying directory: {video_dir_videos}")
-        if not os.path.exists(video_dir_videos):
-            print(f"Error: Video directory not created: {video_dir_videos}")
-            return False
-        
-        video_file_videos = os.path.join(video_dir_videos, f"video_{video_id}.mp4")
-        print(f"Verifying video file: {video_file_videos}")
-        if not os.path.exists(video_file_videos):
-            print(f"Error: Video file not copied: {video_file_videos}")
-            # Try to fix it
-            if os.path.exists(processed_video_path):
-                print("Attempting to copy video file again...")
-                shutil.copy2(processed_video_path, video_file_videos)
-            else:
-                return False
-        
-        llc_file_videos = os.path.join(video_dir_videos, f"video_{video_id}.llc")
-        print(f"Verifying LLC file: {llc_file_videos}")
-        if not os.path.exists(llc_file_videos):
-            print(f"Error: LLC file not copied: {llc_file_videos}")
-            # Try to fix it
-            if os.path.exists(llc_path):
-                print("Attempting to copy LLC file again...")
-                shutil.copy2(llc_path, llc_file_videos)
-            else:
-                return False
-        
-        # Step 4: Run stroke segmentation
-        print(f"[STEP 4/6] Running stroke segmentation - STARTING")
-        segmentation_success = run_stroke_segmentation()
-        print(f"[STEP 4/6] Stroke segmentation result: {segmentation_success}")
-        if not segmentation_success:
-            print("Error running stroke segmentation. Continuing anyway...")
-        print(f"[STEP 4/6] Running stroke segmentation - COMPLETED")
-        
-        # Check if stroke segmentation created clips
-        clips_dir = os.path.join(video_dir_videos, f"video_{video_id}_clips")
-        clips_exist = False
-        
-        print(f"Checking for clips in: {clips_dir}")
-        if os.path.exists(clips_dir):
-            clips = [f for f in os.listdir(clips_dir) if f.endswith('.mp4')]
-            print(f"Found {len(clips)} clips in {clips_dir}")
-            if clips:
-                clips_exist = True
-                print(f"First few clips: {clips[:5]}")
-            else:
-                print("Warning: No clips created, stroke segmentation might have failed")
-        else:
-            print(f"Warning: Clips directory not created: {clips_dir}")
-        
-        # Step 5: Check for strokes in Strokes Library
-        print(f"[STEP 5/6] Processing clips - STARTING")
-        
-        # First check if there are any strokes already in the library from this video
-        print(f"Checking for existing strokes from video_{video_id} in Strokes Library...")
-        existing_strokes = get_strokes_for_video(video_id)
-        if existing_strokes:
-            print(f"Found {len(existing_strokes)} strokes already in library: {existing_strokes[:5]}")
-        
-        # If clips exist, always use the fallback method to ensure they're properly copied
-        strokes_from_clips = []
-        if clips_exist:
-            print(f"Clips exist in {clips_dir}. Using manual copy method to ensure all clips are in library.")
-            strokes_from_clips = manually_copy_clips_to_library(video_id)
-            print(f"Copied {len(strokes_from_clips)} strokes to library")
-        
-        # Combine strokes from both methods
-        all_strokes = list(set(existing_strokes + strokes_from_clips))
-        print(f"Total strokes for video_{video_id}: {len(all_strokes)}")
-        print(f"[STEP 5/6] Processing clips - COMPLETED (found/created {len(all_strokes)} strokes)")
-        
-        # SKIP: No 3D visualizations needed
-        print(f"SKIPPING 3D visualizations as they've been removed from the process")
-        
-        # Clean up step
-        print(f"[STEP 6/6] Cleaning up - STARTING")
-        
-        # Clean up temporary files
-        print(f"Cleaning up temporary files in: {temp_dir}")
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"[STEP 6/6] Cleaning up - COMPLETED")
-        
-        print("\n=== PROCESSING COMPLETE ===")
-        print(f"Processed {video_basename} as video_{video_id}")
-        if all_strokes:
-            print(f"Generated {len(all_strokes)} stroke clips in the Strokes Library")
-            print(f"Results are available in the {STROKES_LIBRARY} directory")
-        else:
-            print("No strokes were found or created in the Strokes Library.")
-            print(f"Check the video_{video_id}_clips directory for clips that might have been generated.")
-        
-        return True
-    except Exception as e:
-        import traceback
-        print(f"=== ERROR IN PROCESS_VIDEO ===")
-        print(f"Exception: {e}")
-        print(traceback.format_exc())
+    if not os.path.isfile(video_path):
+        print(f"[ERROR] Video file not found: {video_path}")
         return False
+    
+    # Determine output directory
+    if output_dir is None:
+        output_dir = os.path.dirname(video_path)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate base filename
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    
+    # Define output paths
+    csv_path = os.path.join(output_dir, f"{base_name}_pose.csv")
+    overlay_path = os.path.join(output_dir, f"{base_name}_overlay.mp4")
+    skeleton_path = os.path.join(output_dir, f"{base_name}_skeleton.mp4")
+    
+    # Extract pose data to CSV
+    if stroke_extraction:
+        extract_success = extract_pose_data(video_path, csv_path)
+        if not extract_success:
+            print(f"[ERROR] Failed to extract pose data from {video_path}")
+            return False
+    
+    # Check if we need to create visualization videos
+    if create_overlay or create_skeleton:
+        # Read the CSV data
+        try:
+            frames_landmarks = pd.read_csv(csv_path)
+        except Exception as e:
+            print(f"[ERROR] Failed to read CSV file {csv_path}: {e}")
+            return False
+        
+        # Create skeleton video
+        if create_skeleton:
+            skeleton_success = create_skeleton_video(video_path, skeleton_path, frames_landmarks)
+            if not skeleton_success:
+                print(f"[ERROR] Failed to create skeleton video")
+        
+        # Create overlay video
+        if create_overlay:
+            overlay_success = create_overlay_video(video_path, overlay_path, frames_landmarks)
+            if not overlay_success:
+                print(f"[ERROR] Failed to create overlay video")
+    
+    print(f"[DONE] Successfully processed {os.path.basename(video_path)}")
+    return True
 
 def manually_copy_clips_to_library(video_id):
     """
@@ -951,23 +886,21 @@ def manually_copy_clips_to_library(video_id):
             skeleton_output = os.path.join(stroke_folder, "stroke_skeleton.mp4")
             
             print(f"Creating pose visualizations for stroke_{stroke_id}...")
-            success = create_pose_visualizations(
+            result = create_pose_visualizations(
                 clip_file_path, 
                 csv_file_path,
                 overlay_output,
                 skeleton_output
             )
             
-            if not success:
-                print(f"Failed to create visualizations. Creating simple copies instead.")
-                # Fallback to simple copies if visualization fails
-                if not os.path.exists(overlay_output):
-                    shutil.copy2(clip_file_path, overlay_output)
-                if not os.path.exists(skeleton_output):
-                    # Create a blank skeleton video - could be improved
-                    shutil.copy2(clip_file_path, skeleton_output)
+            if result is None:
+                print(f"Failed to create visualizations for stroke_{stroke_id}")
+            else:
+                overlay_path, skeleton_path = result
+                print(f"Created overlay video: {os.path.basename(overlay_path)}")
+                print(f"Created skeleton video: {os.path.basename(skeleton_path)}")
         else:
-            print(f"Missing clip or CSV file, cannot create visualizations")
+            print(f"Missing clip or CSV file, cannot create visualizations for stroke_{stroke_id}")
         
         # Create source info file
         source_info_path = os.path.join(stroke_folder, "source_info.txt")
@@ -1012,11 +945,28 @@ def main():
     
     for video_path, llc_path in video_llc_pairs:
         current_video_id = video_id + processed_count
-        success = process_video(video_path, llc_path, current_video_id)
+        
+        # Create an output directory for this video
+        output_dir = os.path.join(DATA_PROCESSED_DIR, f"video_{current_video_id}")
+        ensure_directory_exists(output_dir)
+        
+        # Define paths for CSVs
+        data_csv = os.path.join(output_dir, f"video_{current_video_id}_data.csv")
+        norm_csv = os.path.join(output_dir, f"video_{current_video_id}_normalized.csv")
+        
+        # First process the video to extract pose data
+        print(f"Processing video {os.path.basename(video_path)} as video_{current_video_id}")
+        success = process_video(video_path, output_dir)
         
         if success:
+            # If processing succeeds, set up for the pipeline
+            llc_processed = setup_for_pipeline(video_path, data_csv, norm_csv, llc_path, current_video_id)
             processed_count += 1
             
+            # Mark as successful for the main loop
+            success = True
+        
+        if success:
             # Copy the processed video to videos library
             video_filename = f"video_{current_video_id}.mp4"
             videos_lib_path = os.path.join(VIDEOS_DIR, f"video_{current_video_id}", video_filename)
@@ -1101,155 +1051,300 @@ def load_landmarks_from_csv(csv_path):
         
     return frames
 
-def draw_pose(frame_bgr, landmarks_dict, width, height):
+def draw_pretty_skeleton(frame=None, landmarks_row=None):
     """
-    Draw a color-coded skeleton with thicker lines and anti-aliasing.
-    Blue (left), Red (right), Green (center).
-    """
-    # Draw center lines
-    for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
-        if lmA in landmarks_dict and lmB in landmarks_dict:
-            xA, yA = landmarks_dict[lmA]
-            xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA*width), int(yA*height))
-            ptB = (int(xB*width), int(yB*height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER,
-                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-
-    # Left edges
-    for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
-        if lmA in landmarks_dict and lmB in landmarks_dict:
-            xA, yA = landmarks_dict[lmA]
-            xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA*width), int(yA*height))
-            ptB = (int(xB*width), int(yB*height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT,
-                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-
-    # Right edges
-    for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
-        if lmA in landmarks_dict and lmB in landmarks_dict:
-            xA, yA = landmarks_dict[lmA]
-            xB, yB = landmarks_dict[lmB]
-            ptA = (int(xA*width), int(yA*height))
-            ptB = (int(xB*width), int(yB*height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT,
-                    thickness=LINE_THICKNESS, lineType=LINE_TYPE)
-
-    # Keypoints
-    for lm_id in range(33):
-        if lm_id in landmarks_dict:
-            nx, ny = landmarks_dict[lm_id]
-            px = int(nx*width)
-            py = int(ny*height)
-            # color-coded keypoints or center color
-            if lm_id in (11,13,15,23,25,27):
-                kp_color = COLOR_LEFT
-            elif lm_id in (12,14,16,24,26,28):
-                kp_color = COLOR_RIGHT
-            else:
-                kp_color = COLOR_CENTER
-
-            cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
-
-# Use draw_pose for draw_full_skeleton for compatibility
-draw_full_skeleton = draw_pose
-
-def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path):
-    """
-    Create overlay and skeleton visualizations of the pose.
+    Draw a skeleton on a frame or on a black background using pose landmarks
     
     Args:
-        video_path: Path to the source video
-        csv_path: Path to the landmarks CSV file
-        overlay_path: Output path for overlay video (pose drawn on original)
-        skeleton_path: Output path for skeleton-only video (pose on black)
-        
+        frame: Optional frame to draw on. If None, a black frame is created
+        landmarks_row: DataFrame row containing pose landmark data with columns 'lm_i_x', 'lm_i_y', 'lm_i_vis'
+    
     Returns:
-        bool: Success or failure
+        Frame with skeleton drawn on it
+    """
+    # Create a black frame if none provided
+    if frame is None:
+        # Determine dimensions from landmarks
+        max_x = max([landmarks_row[f'lm_{i}_x'] for i in range(33) if not pd.isna(landmarks_row[f'lm_{i}_x'])])
+        max_y = max([landmarks_row[f'lm_{i}_y'] for i in range(33) if not pd.isna(landmarks_row[f'lm_{i}_y'])])
+        
+        # Default to 1280x720 if we can't determine from landmarks
+        frame_width = int(max(1280, max_x * 1.1))
+        frame_height = int(max(720, max_y * 1.1))
+        frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+    else:
+        frame = frame.copy()  # Create a copy to avoid modifying the original
+
+    # Colors for the skeleton (in BGR format)
+    color_center = (255, 191, 0)    # Deep Sky Blue
+    color_left = (0, 191, 255)      # Golden
+    color_right = (255, 127, 80)    # Coral
+    
+    # Parameters for visualization
+    line_thickness = 2
+    circle_radius = 4
+    min_visibility = 0.5  # Minimum visibility threshold
+    
+    # Draw center connections
+    for connection in POSE_CONNECTIONS_CENTER:
+        start_idx, end_idx = connection
+        
+        # Get landmark coordinates and visibility
+        start_x = landmarks_row[f'lm_{start_idx}_x']
+        start_y = landmarks_row[f'lm_{start_idx}_y'] 
+        start_vis = landmarks_row[f'lm_{start_idx}_vis']
+        
+        end_x = landmarks_row[f'lm_{end_idx}_x']
+        end_y = landmarks_row[f'lm_{end_idx}_y']
+        end_vis = landmarks_row[f'lm_{end_idx}_vis']
+        
+        # Only draw if both landmarks are visible enough
+        if start_vis > min_visibility and end_vis > min_visibility:
+            start_point = (int(start_x), int(start_y))
+            end_point = (int(end_x), int(end_y))
+            cv2.line(frame, start_point, end_point, color_center, line_thickness)
+    
+    # Draw left side connections
+    for connection in POSE_CONNECTIONS_LEFT:
+        start_idx, end_idx = connection
+        
+        # Get landmark coordinates and visibility
+        start_x = landmarks_row[f'lm_{start_idx}_x']
+        start_y = landmarks_row[f'lm_{start_idx}_y'] 
+        start_vis = landmarks_row[f'lm_{start_idx}_vis']
+        
+        end_x = landmarks_row[f'lm_{end_idx}_x']
+        end_y = landmarks_row[f'lm_{end_idx}_y']
+        end_vis = landmarks_row[f'lm_{end_idx}_vis']
+        
+        # Only draw if both landmarks are visible enough
+        if start_vis > min_visibility and end_vis > min_visibility:
+            start_point = (int(start_x), int(start_y))
+            end_point = (int(end_x), int(end_y))
+            cv2.line(frame, start_point, end_point, color_left, line_thickness)
+    
+    # Draw right side connections
+    for connection in POSE_CONNECTIONS_RIGHT:
+        start_idx, end_idx = connection
+        
+        # Get landmark coordinates and visibility
+        start_x = landmarks_row[f'lm_{start_idx}_x']
+        start_y = landmarks_row[f'lm_{start_idx}_y'] 
+        start_vis = landmarks_row[f'lm_{start_idx}_vis']
+        
+        end_x = landmarks_row[f'lm_{end_idx}_x']
+        end_y = landmarks_row[f'lm_{end_idx}_y']
+        end_vis = landmarks_row[f'lm_{end_idx}_vis']
+        
+        # Only draw if both landmarks are visible enough
+        if start_vis > min_visibility and end_vis > min_visibility:
+            start_point = (int(start_x), int(start_y))
+            end_point = (int(end_x), int(end_y))
+            cv2.line(frame, start_point, end_point, color_right, line_thickness)
+    
+    # Draw landmarks
+    for i in range(33):  # MediaPipe has 33 landmarks
+        x = landmarks_row[f'lm_{i}_x']
+        y = landmarks_row[f'lm_{i}_y']
+        vis = landmarks_row[f'lm_{i}_vis']
+        
+        if vis > min_visibility:
+            point = (int(x), int(y))
+            
+            # Choose color based on landmark position
+            color = color_center
+            # Check if this is a left-side landmark
+            for connection in POSE_CONNECTIONS_LEFT:
+                if i in connection:
+                    color = color_left
+                    break
+            # Check if this is a right-side landmark
+            for connection in POSE_CONNECTIONS_RIGHT:
+                if i in connection:
+                    color = color_right
+                    break
+                
+            cv2.circle(frame, point, circle_radius, color, -1)  # -1 for filled circle
+    
+    return frame
+
+def create_skeleton_video(input_video, output_path, landmarks_data):
+    """
+    Create a video with only the skeleton on a black background
+    
+    Args:
+        input_video: Path to the input video file
+        output_path: Path to save the output video
+        landmarks_data: DataFrame containing pose landmarks data
+    
+    Returns:
+        Path to the created skeleton video
     """
     try:
-        print(f"Creating pose visualizations for {os.path.basename(video_path)}")
-        
-        # Skip if output files already exist
-        if os.path.isfile(overlay_path) and os.path.isfile(skeleton_path):
-            print(f"[SKIP] Output files already exist. Not overwriting.")
-            return True
-            
-        # Load video
-        cap = cv2.VideoCapture(video_path)
+        # Open the video
+        cap = cv2.VideoCapture(input_video)
         if not cap.isOpened():
-            print(f"[ERROR] Cannot open {video_path}")
-            return False
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            print(f"Error: Could not open video {input_video}")
+            return None
         
-        # Load landmarks from CSV
-        if not os.path.isfile(csv_path):
-            print(f"[WARN] No CSV found: {csv_path}")
-            cap.release()
-            return False
-            
-        frames_landmarks = load_landmarks_from_csv(csv_path)
-        if not frames_landmarks:
-            print(f"[ERROR] No landmarks found in {csv_path}")
-            cap.release()
-            return False
-            
-        print(f"Video: {width}x{height} at {fps}fps, {frame_count} frames")
-        print(f"Landmarks: {len(frames_landmarks)} frames")
+        # Get video properties
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Setup video writers
+        # Group landmarks by frame_index for easy lookup
+        landmarks_by_frame = landmarks_data.groupby('frame_index')
+        
+        # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        overlay_writer = cv2.VideoWriter(overlay_path, fourcc, fps, (width, height))
-        skeleton_writer = cv2.VideoWriter(skeleton_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
         
-        # Process frames
         frame_idx = 0
-        while True:
+        while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
                 
-            # Create overlay video
-            if frame_idx < len(frames_landmarks):
-                # Overlay mode
-                overlay = frame.copy()
-                draw_pose(overlay, frames_landmarks[frame_idx], width, height)
-                overlay_writer.write(overlay)
+            # Print progress every 30 frames
+            if frame_idx % 30 == 0:
+                print(f"Processing frame {frame_idx}/{total_frames}")
                 
-                # Skeleton mode (black background)
-                skeleton = np.zeros((height, width, 3), dtype=np.uint8)
-                draw_pose(skeleton, frames_landmarks[frame_idx], width, height)
-                skeleton_writer.write(skeleton)
+            # Check if we have landmarks for this frame
+            if frame_idx in landmarks_by_frame.groups:
+                # Get the landmarks for this frame
+                frame_landmarks = landmarks_by_frame.get_group(frame_idx).iloc[0]
+                
+                # Create skeleton frame (on black background)
+                skeleton_frame = draw_pretty_skeleton(None, frame_landmarks)
+                
+                # Write to output video
+                out.write(skeleton_frame)
             else:
-                # If we run out of landmarks, just copy the frame for overlay
-                # and write a black frame for skeleton
-                overlay_writer.write(frame)
-                skeleton = np.zeros((height, width, 3), dtype=np.uint8)
-                skeleton_writer.write(skeleton)
-            
-            # Show progress
+                # If no landmarks, write a black frame
+                black_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+                out.write(black_frame)
+                
             frame_idx += 1
-            if frame_idx % 20 == 0:
-                print(f"Processing frame {frame_idx}/{frame_count} ({frame_idx/frame_count*100:.1f}%)", end="\r")
-        
-        # Clean up
+            
+        # Release resources
         cap.release()
-        overlay_writer.release()
-        skeleton_writer.release()
+        out.release()
         
-        print(f"\n[DONE] Created visualizations: {os.path.basename(overlay_path)}, {os.path.basename(skeleton_path)}")
-        return True
+        return output_path
         
     except Exception as e:
-        import traceback
-        print(f"[ERROR] Creating pose visualizations: {e}")
-        print(traceback.format_exc())
-        return False
+        print(f"Error creating skeleton video: {e}")
+        return None
+
+def create_overlay_video(input_video, output_path, landmarks_data):
+    """
+    Create a video with the skeleton overlaid on the original video
+    
+    Args:
+        input_video: Path to the input video file
+        output_path: Path to save the output video
+        landmarks_data: DataFrame containing pose landmarks data
+    
+    Returns:
+        Path to the created overlay video
+    """
+    try:
+        # Open the video
+        cap = cv2.VideoCapture(input_video)
+        if not cap.isOpened():
+            print(f"Error: Could not open video {input_video}")
+            return None
+        
+        # Get video properties
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # Group landmarks by frame_index for easy lookup
+        landmarks_by_frame = landmarks_data.groupby('frame_index')
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+        
+        frame_idx = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            # Print progress every 30 frames
+            if frame_idx % 30 == 0:
+                print(f"Processing frame {frame_idx}/{total_frames}")
+                
+            # Check if we have landmarks for this frame
+            if frame_idx in landmarks_by_frame.groups:
+                # Get the landmarks for this frame
+                frame_landmarks = landmarks_by_frame.get_group(frame_idx).iloc[0]
+                
+                # Create overlay by drawing skeleton on the original frame
+                overlay_frame = draw_pretty_skeleton(frame, frame_landmarks)
+                
+                # Write to output video
+                out.write(overlay_frame)
+            else:
+                # If no landmarks, just write the original frame
+                out.write(frame)
+                
+            frame_idx += 1
+            
+        # Release resources
+        cap.release()
+        out.release()
+        
+        return output_path
+        
+    except Exception as e:
+        print(f"Error creating overlay video: {e}")
+        return None
+
+def create_pose_visualizations(video_path, csv_path, overlay_path, skeleton_path):
+    """
+    Create pose visualization videos from a CSV file containing pose landmarks
+    
+    Args:
+        video_path: Path to the input video
+        csv_path: Path to the CSV file with pose landmarks
+        overlay_path: Path to save the overlay video (skeleton on original video)
+        skeleton_path: Path to save the skeleton-only video
+        
+    Returns:
+        Tuple (overlay_path, skeleton_path) if successful, None if error
+    """
+    try:
+        # Load landmarks data from CSV
+        landmarks_data = pd.read_csv(csv_path)
+        
+        results = []
+        
+        # Create skeleton video if requested
+        if skeleton_path:
+            print(f"Creating skeleton video: {skeleton_path}")
+            skeleton_result = create_skeleton_video(video_path, skeleton_path, landmarks_data)
+            results.append(skeleton_result)
+        
+        # Create overlay video if requested
+        if overlay_path:
+            print(f"Creating overlay video: {overlay_path}")
+            overlay_result = create_overlay_video(video_path, overlay_path, landmarks_data)
+            results.append(overlay_result)
+        
+        # Check if all operations were successful
+        if all(result is not None for result in results):
+            return (overlay_path, skeleton_path)
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"Error creating pose visualizations: {e}")
+        return None
 
 if __name__ == "__main__":
     exit_code = main()
