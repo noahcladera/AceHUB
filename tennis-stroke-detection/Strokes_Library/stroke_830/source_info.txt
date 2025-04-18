@@ -1,2 +1,2 @@
-Source Video: video_47
-Stroke Number in Video: 84
+Source Video: video_40
+Stroke Number in Video: 4

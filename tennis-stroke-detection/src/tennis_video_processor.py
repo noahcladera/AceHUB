@@ -139,13 +139,24 @@ def get_next_video_id():
 
 def convert_video_to_mp4(input_path, output_path):
     """
-    Convert MOV or other video formats to MP4 format.
+    Convert MOV or other video formats to MP4 format with high quality.
     Returns True if conversion was successful.
     """
     try:
-        print(f"Converting video format to MP4...")
+        print(f"Converting video format to MP4 with high quality settings...")
         result = subprocess.run(
-            ["ffmpeg", "-i", input_path, "-c:v", "libx264", "-c:a", "aac", "-y", output_path],
+            [
+                "ffmpeg", 
+                "-i", input_path, 
+                "-c:v", "libx264", 
+                "-preset", "slow",  # Higher quality encoding
+                "-crf", "18",       # Lower CRF means higher quality (18 is considered visually lossless)
+                "-pix_fmt", "yuv420p",  # Standard pixel format for compatibility
+                "-vf", "fps=30",    # Consistent framerate
+                "-c:a", "aac", 
+                "-b:a", "192k",     # Better audio quality
+                "-y", output_path
+            ],
             capture_output=True, 
             text=True,
             check=True
@@ -678,17 +689,6 @@ def process_video(video_path, llc_path, video_id=None):
         ensure_directory_exists(temp_dir)
         print(f"Created temporary directory: {temp_dir}")
         
-        # Convert MOV to MP4 if needed
-        if video_ext.lower() != '.mp4':
-            print(f"Video is in {video_ext} format, converting to MP4...")
-            mp4_path = os.path.join(temp_dir, f"{video_basename}.mp4")
-            if not convert_video_to_mp4(video_path, mp4_path):
-                print("Failed to convert video. Make sure ffmpeg is installed.")
-                return False
-            # Use the converted MP4 file for processing
-            video_path = mp4_path
-            print(f"Using converted video: {video_path}")
-        
         # Define output paths
         data_csv = os.path.join(temp_dir, f"{video_basename}_data.csv")
         norm_csv = os.path.join(temp_dir, f"{video_basename}_normalized.csv")
@@ -699,12 +699,24 @@ def process_video(video_path, llc_path, video_id=None):
         
         print(f"Using video ID: {video_id}")
         
-        # Step 1: Extract pose data
+        # Step 1: Extract pose data - directly from original for better quality
         print(f"[STEP 1/6] Extracting pose data - STARTING")
         if not extract_pose_data(video_path, data_csv):
             print("Error extracting pose data. Exiting.")
             return False
         print(f"[STEP 1/6] Extracting pose data - COMPLETED")
+        
+        # Convert MOV to MP4 if needed (after pose extraction)
+        processed_video_path = video_path
+        if video_ext.lower() != '.mp4':
+            print(f"Video is in {video_ext} format, converting to MP4...")
+            mp4_path = os.path.join(temp_dir, f"{video_basename}.mp4")
+            if not convert_video_to_mp4(video_path, mp4_path):
+                print("Failed to convert video. Make sure ffmpeg is installed.")
+                return False
+            # Use the converted MP4 file for the remaining processing
+            processed_video_path = mp4_path
+            print(f"Using converted video for further processing: {processed_video_path}")
         
         # Step 2: Normalize pose data
         print(f"[STEP 2/6] Normalizing pose data - STARTING")
@@ -715,7 +727,7 @@ def process_video(video_path, llc_path, video_id=None):
         
         # Step 3: Set up for pipeline
         print(f"[STEP 3/6] Setting up for pipeline - STARTING")
-        target_llc = setup_for_pipeline(video_path, data_csv, norm_csv, llc_path, video_id)
+        target_llc = setup_for_pipeline(processed_video_path, data_csv, norm_csv, llc_path, video_id)
         print(f"[STEP 3/6] Setting up for pipeline - COMPLETED")
         
         # Verify setup worked correctly
@@ -730,9 +742,9 @@ def process_video(video_path, llc_path, video_id=None):
         if not os.path.exists(video_file_videos):
             print(f"Error: Video file not copied: {video_file_videos}")
             # Try to fix it
-            if os.path.exists(video_path):
+            if os.path.exists(processed_video_path):
                 print("Attempting to copy video file again...")
-                shutil.copy2(video_path, video_file_videos)
+                shutil.copy2(processed_video_path, video_file_videos)
             else:
                 return False
         
