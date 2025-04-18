@@ -208,7 +208,6 @@ def main():
         csv_path = os.path.join(FINAL_LIBRARY, base + ".csv")
         print(f"\n[PROCESSING] {fname}")
 
-
         # 2) overlay, if CSV is found
         if os.path.isfile(csv_path):
             process_mp4(video_path, csv_path=csv_path, mode="overlay")
