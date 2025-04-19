@@ -45,8 +45,7 @@ from scipy.interpolate import interp1d
 UNPROCESSED_DIR = "unprocessed_videos"
 VIDEOS_DIR = "videos"
 STROKES_LIBRARY = "Strokes_Library"
-DATA_PROCESSED_DIR = os.path.join("data", "processed")
-OUTPUT_DIR = "Output"
+OUTPUT_DIR = "Output"  # Temporary directory for processing
 
 # Visualization constants
 # Color configuration
@@ -74,37 +73,54 @@ def get_video_and_llc_paths():
     Returns a list of tuples (video_path, llc_path).
     """
     if not os.path.exists(UNPROCESSED_DIR):
-        print(f"Error: Unprocessed videos directory not found: {UNPROCESSED_DIR}")
+        print(f"[ERROR] Unprocessed videos directory not found: {UNPROCESSED_DIR}")
         return []
     
-    video_files = []
-    for file in os.listdir(UNPROCESSED_DIR):
-        lower_file = file.lower()
-        if lower_file.endswith(('.mp4', '.mov', '.avi')):
-            # Get base name without extension
-            base_name = os.path.splitext(file)[0]
-            # Look for LLC files
-            llc_file = None
+    try:
+        video_files = []
+        llc_files = []
+        
+        for file in os.listdir(UNPROCESSED_DIR):
+            file_path = os.path.join(UNPROCESSED_DIR, file)
             
-            # Check for LLC with same name
-            potential_llc = f"{base_name}.llc"
-            if os.path.exists(os.path.join(UNPROCESSED_DIR, potential_llc)):
-                llc_file = potential_llc
+            # Skip directories and hidden files
+            if os.path.isdir(file_path) or file.startswith('.'):
+                continue
+                
+            lower_file = file.lower()
+            if lower_file.endswith(('.mp4', '.mov', '.avi')):
+                video_files.append(file)
+            elif lower_file.endswith('.llc'):
+                llc_files.append(file)
+                
+        # Match videos with LLC files
+        video_llc_pairs = []
+        
+        for video_file in video_files:
+            video_path = os.path.join(UNPROCESSED_DIR, video_file)
+            base_name = os.path.splitext(video_file)[0]
             
-            # Also check for LLC with full filename
-            potential_llc_full = f"{file}.llc"
-            if os.path.exists(os.path.join(UNPROCESSED_DIR, potential_llc_full)):
-                llc_file = potential_llc_full
+            # Look for LLC file with same base name
+            llc_file = f"{base_name}.llc"
+            llc_path = os.path.join(UNPROCESSED_DIR, llc_file)
             
-            # If we found an LLC file, add the pair
-            if llc_file:
-                video_path = os.path.join(UNPROCESSED_DIR, file)
-                llc_path = os.path.join(UNPROCESSED_DIR, llc_file)
-                video_files.append((video_path, llc_path))
+            if llc_file in llc_files:
+                video_llc_pairs.append((video_path, llc_path))
             else:
-                print(f"Warning: No LLC file found for {file}, skipping.")
-    
-    return video_files
+                # Also check for LLC with full filename
+                full_llc = f"{video_file}.llc"
+                full_llc_path = os.path.join(UNPROCESSED_DIR, full_llc)
+                
+                if full_llc in llc_files:
+                    video_llc_pairs.append((video_path, full_llc_path))
+                else:
+                    print(f"[WARN] No LLC file found for {video_file}, skipping.")
+        
+        return video_llc_pairs
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to scan unprocessed videos directory: {e}")
+        return []
 
 def get_next_video_id():
     """Find the next available video ID by checking existing folders"""
@@ -117,9 +133,9 @@ def get_next_video_id():
                               if d.startswith("video_") and os.path.isdir(os.path.join(VIDEOS_DIR, d))])
         
         # Check processed directory
-        if os.path.exists(DATA_PROCESSED_DIR):
-            video_dirs.extend([d for d in os.listdir(DATA_PROCESSED_DIR) 
-                              if d.startswith("video_") and os.path.isdir(os.path.join(DATA_PROCESSED_DIR, d))])
+        if os.path.exists(OUTPUT_DIR):
+            video_dirs.extend([d for d in os.listdir(OUTPUT_DIR) 
+                              if d.startswith("video_") and os.path.isdir(os.path.join(OUTPUT_DIR, d))])
         
         # Extract IDs and find max
         if video_dirs:
@@ -196,7 +212,7 @@ def draw_pretty_skeleton(frame_bgr, landmarks, width, height):
 
         cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
 
-def process_video_with_mediapipe(video_path, output_prefix=None):
+def process_video_with_mediapipe(video_path, output_prefix=None, video_id=None):
     """
     Process a video with MediaPipe Pose and create output videos.
     This is the enhanced implementation from enhanced_tennis_processor.py.
@@ -204,6 +220,7 @@ def process_video_with_mediapipe(video_path, output_prefix=None):
     Args:
         video_path: Path to the input video
         output_prefix: Prefix for output files (default: video filename without extension)
+        video_id: Video ID for direct output to videos folder
         
     Returns:
         tuple: (skeleton_output, overlay_output, landmarks_dict_list, csv_output)
@@ -237,22 +254,29 @@ def process_video_with_mediapipe(video_path, output_prefix=None):
     
     print(f"[INFO] Video: {width}x{height} at {fps} FPS, {total_frames} frames")
     
-    # Create output directory if it doesn't exist
-    ensure_directory_exists(OUTPUT_DIR)
-    
-    # Setup output video writers
-    skeleton_output = f"{OUTPUT_DIR}/{output_prefix}_skeleton.mp4"
-    overlay_output = f"{OUTPUT_DIR}/{output_prefix}_overlay.mp4"
-    csv_output = f"{OUTPUT_DIR}/{output_prefix}_data.csv"
-    
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    skeleton_writer = cv2.VideoWriter(skeleton_output, fourcc, fps, (width, height))
-    overlay_writer = cv2.VideoWriter(overlay_output, fourcc, fps, (width, height))
+    # Set up output paths 
+    # If video_id is provided, output directly to videos folder
+    if video_id is not None:
+        videos_dir_path = os.path.join(VIDEOS_DIR, f"video_{video_id}")
+        ensure_directory_exists(videos_dir_path)
+        skeleton_output = os.path.join(videos_dir_path, f"video_{video_id}_skeleton.mp4")
+        overlay_output = os.path.join(videos_dir_path, f"video_{video_id}_overlay.mp4")
+        csv_output = os.path.join(videos_dir_path, f"video_{video_id}_data.csv")
+    else:
+        # Output to temporary location
+        ensure_directory_exists(OUTPUT_DIR)
+        skeleton_output = f"{OUTPUT_DIR}/{output_prefix}_skeleton.mp4"
+        overlay_output = f"{OUTPUT_DIR}/{output_prefix}_overlay.mp4"
+        csv_output = f"{OUTPUT_DIR}/{output_prefix}_data.csv"
     
     print(f"[INFO] Processing video and creating:")
     print(f"       - {skeleton_output}")
     print(f"       - {overlay_output}")
     print(f"       - {csv_output}")
+    
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    skeleton_writer = cv2.VideoWriter(skeleton_output, fourcc, fps, (width, height))
+    overlay_writer = cv2.VideoWriter(overlay_output, fourcc, fps, (width, height))
     
     # Prepare CSV file
     with open(csv_output, "w", newline="") as csvfile:
@@ -269,101 +293,106 @@ def process_video_with_mediapipe(video_path, output_prefix=None):
     frame_count = 0
     landmarks_dict_list = []
     
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Convert to RGB for MediaPipe
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = pose.process(frame_rgb)
-        
-        # If pose detected, extract landmarks
-        if results.pose_landmarks:
-            # Convert landmarks to dictionary format {lm_id: (x, y)}
-            landmarks_dict = {}
-            for lm_id, landmark in enumerate(results.pose_landmarks.landmark):
-                landmarks_dict[lm_id] = (landmark.x, landmark.y)
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
             
-            landmarks_dict_list.append(landmarks_dict)
+            # Convert to RGB for MediaPipe
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(frame_rgb)
             
-            # Create black background for skeleton-only video
-            skeleton_frame = np.zeros((height, width, 3), dtype=np.uint8)
-            
-            # Draw skeleton on black background
-            draw_pretty_skeleton(skeleton_frame, landmarks_dict, width, height)
-            
-            # Draw skeleton on original frame (for overlay)
-            overlay_frame = frame.copy()
-            draw_pretty_skeleton(overlay_frame, landmarks_dict, width, height)
-            
-            # Write frames to output videos
-            skeleton_writer.write(skeleton_frame)
-            overlay_writer.write(overlay_frame)
-            
-            # Save to CSV
-            with open(csv_output, "a", newline="") as csvfile:
-                writer = csv.writer(csvfile)
-                row = [frame_count]
+            # If pose detected, extract landmarks
+            if results.pose_landmarks:
+                # Convert landmarks to dictionary format {lm_id: (x, y)}
+                landmarks_dict = {}
+                for lm_id, landmark in enumerate(results.pose_landmarks.landmark):
+                    landmarks_dict[lm_id] = (landmark.x, landmark.y)
                 
-                # Add all landmark data
-                for lm_id in range(33):
-                    if lm_id in landmarks_dict:
-                        x, y = landmarks_dict[lm_id]
-                        # For z and visibility, use dummy values if not available
-                        z = results.pose_landmarks.landmark[lm_id].z if hasattr(results.pose_landmarks.landmark[lm_id], 'z') else 0.0
-                        vis = results.pose_landmarks.landmark[lm_id].visibility if hasattr(results.pose_landmarks.landmark[lm_id], 'visibility') else 1.0
-                        row.extend([x, y, z, vis])
-                    else:
-                        row.extend([0.0, 0.0, 0.0, 0.0])
+                landmarks_dict_list.append(landmarks_dict)
                 
-                # Calculate elbow angles
-                if 11 in landmarks_dict and 13 in landmarks_dict and 15 in landmarks_dict:
-                    l_shoulder = results.pose_landmarks.landmark[11]
-                    l_elbow = results.pose_landmarks.landmark[13]
-                    l_wrist = results.pose_landmarks.landmark[15]
-                    l_angle = calculate_angle(l_shoulder.x, l_shoulder.y, l_elbow.x, l_elbow.y, l_wrist.x, l_wrist.y)
-                else:
-                    l_angle = 0.0
+                # Create black background for skeleton-only video
+                skeleton_frame = np.zeros((height, width, 3), dtype=np.uint8)
+                
+                # Draw skeleton on black background
+                draw_pretty_skeleton(skeleton_frame, landmarks_dict, width, height)
+                
+                # Draw skeleton on original frame (for overlay)
+                overlay_frame = frame.copy()
+                draw_pretty_skeleton(overlay_frame, landmarks_dict, width, height)
+                
+                # Write frames to output videos
+                skeleton_writer.write(skeleton_frame)
+                overlay_writer.write(overlay_frame)
+                
+                # Save to CSV
+                with open(csv_output, "a", newline="") as csvfile:
+                    writer = csv.writer(csvfile)
+                    row = [frame_count]
                     
-                if 12 in landmarks_dict and 14 in landmarks_dict and 16 in landmarks_dict:
-                    r_shoulder = results.pose_landmarks.landmark[12]
-                    r_elbow = results.pose_landmarks.landmark[14]
-                    r_wrist = results.pose_landmarks.landmark[16]
-                    r_angle = calculate_angle(r_shoulder.x, r_shoulder.y, r_elbow.x, r_elbow.y, r_wrist.x, r_wrist.y)
-                else:
-                    r_angle = 0.0
+                    # Add all landmark data
+                    for lm_id in range(33):
+                        if lm_id in landmarks_dict:
+                            x, y = landmarks_dict[lm_id]
+                            # For z and visibility, use dummy values if not available
+                            z = results.pose_landmarks.landmark[lm_id].z if hasattr(results.pose_landmarks.landmark[lm_id], 'z') else 0.0
+                            vis = results.pose_landmarks.landmark[lm_id].visibility if hasattr(results.pose_landmarks.landmark[lm_id], 'visibility') else 1.0
+                            row.extend([x, y, z, vis])
+                        else:
+                            row.extend([0.0, 0.0, 0.0, 0.0])
+                    
+                    # Calculate elbow angles
+                    if 11 in landmarks_dict and 13 in landmarks_dict and 15 in landmarks_dict:
+                        l_shoulder = results.pose_landmarks.landmark[11]
+                        l_elbow = results.pose_landmarks.landmark[13]
+                        l_wrist = results.pose_landmarks.landmark[15]
+                        l_angle = calculate_angle(l_shoulder.x, l_shoulder.y, l_elbow.x, l_elbow.y, l_wrist.x, l_wrist.y)
+                    else:
+                        l_angle = 0.0
+                        
+                    if 12 in landmarks_dict and 14 in landmarks_dict and 16 in landmarks_dict:
+                        r_shoulder = results.pose_landmarks.landmark[12]
+                        r_elbow = results.pose_landmarks.landmark[14]
+                        r_wrist = results.pose_landmarks.landmark[16]
+                        r_angle = calculate_angle(r_shoulder.x, r_shoulder.y, r_elbow.x, r_elbow.y, r_wrist.x, r_wrist.y)
+                    else:
+                        r_angle = 0.0
+                    
+                    # Add angles and default stroke label (1)
+                    row.extend([r_angle, l_angle, 1])
+                    writer.writerow(row)
+            else:
+                # No pose detected, just write original frame to overlay 
+                # and black frame to skeleton
+                skeleton_writer.write(np.zeros((height, width, 3), dtype=np.uint8))
+                overlay_writer.write(frame)
+                landmarks_dict_list.append({})  # Empty dict for this frame
                 
-                # Add angles and default stroke label (1)
-                row.extend([r_angle, l_angle, 1])
-                writer.writerow(row)
-        else:
-            # No pose detected, just write original frame to overlay 
-            # and black frame to skeleton
-            skeleton_writer.write(np.zeros((height, width, 3), dtype=np.uint8))
-            overlay_writer.write(frame)
-            landmarks_dict_list.append({})  # Empty dict for this frame
+                # Write empty row to CSV
+                with open(csv_output, "a", newline="") as csvfile:
+                    writer = csv.writer(csvfile)
+                    row = [frame_count]
+                    for i in range(33):
+                        row.extend([0.0, 0.0, 0.0, 0.0])  # x, y, z, visibility
+                    row.extend([0.0, 0.0, 1])  # right_elbow_angle, left_elbow_angle, stroke_label
+                    writer.writerow(row)
             
-            # Write empty row to CSV
-            with open(csv_output, "a", newline="") as csvfile:
-                writer = csv.writer(csvfile)
-                row = [frame_count]
-                for i in range(33):
-                    row.extend([0.0, 0.0, 0.0, 0.0])  # x, y, z, visibility
-                row.extend([0.0, 0.0, 1])  # right_elbow_angle, left_elbow_angle, stroke_label
-                writer.writerow(row)
-        
-        # Update progress
-        frame_count += 1
-        if frame_count % 30 == 0:  # Update every 30 frames
-            percent = (frame_count / total_frames) * 100
-            print(f"[INFO] Progress: {frame_count}/{total_frames} frames ({percent:.1f}%)")
-    
-    # Release resources
-    cap.release()
-    skeleton_writer.release()
-    overlay_writer.release()
-    pose.close()
+            # Update progress
+            frame_count += 1
+            if frame_count % 30 == 0:  # Update every 30 frames
+                percent = (frame_count / total_frames) * 100
+                print(f"[INFO] Progress: {frame_count}/{total_frames} frames ({percent:.1f}%)")
+    except Exception as e:
+        print(f"[ERROR] Error during video processing: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Release resources
+        cap.release()
+        skeleton_writer.release()
+        overlay_writer.release()
+        pose.close()
     
     print(f"[DONE] Successfully processed video")
     print(f"       - Skeleton video: {skeleton_output}")
@@ -372,11 +401,31 @@ def process_video_with_mediapipe(video_path, output_prefix=None):
     
     return skeleton_output, overlay_output, landmarks_dict_list, csv_output
 
-def normalize_pose_data(input_csv, output_csv):
+def normalize_pose_data(input_csv, output_csv=None, video_id=None):
     """
     Normalize the pose data to make it invariant to position and scale.
+    
+    Args:
+        input_csv: Path to the input CSV file
+        output_csv: Path to the output CSV file (if None, will generate based on video_id)
+        video_id: Video ID to use for direct output path
+    
+    Returns:
+        Path to the normalized CSV file
     """
     print(f"[STEP 2] Normalizing pose data")
+    
+    # Set up output path
+    if output_csv is None:
+        if video_id is not None:
+            videos_dir_path = os.path.join(VIDEOS_DIR, f"video_{video_id}")
+            ensure_directory_exists(videos_dir_path)
+            output_csv = os.path.join(videos_dir_path, f"video_{video_id}_normalized.csv")
+        else:
+            # Default output path
+            base_dir = os.path.dirname(input_csv)
+            base_name = os.path.basename(input_csv).replace("_data.csv", "_normalized.csv")
+            output_csv = os.path.join(base_dir, base_name)
     
     try:
         # Read the CSV file
@@ -441,10 +490,12 @@ def normalize_pose_data(input_csv, output_csv):
         print(f"[DONE] Normalized data saved to {output_csv}")
         
     except Exception as e:
-        print(f"Error during normalization: {e}")
-        return False
+        print(f"[ERROR] Error during normalization: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
     
-    return True 
+    return output_csv
 
 def check_llc_file(llc_path):
     """
@@ -489,86 +540,6 @@ def check_llc_file(llc_path):
     
     return False
 
-def setup_for_pipeline(video_path, skeleton_path, overlay_path, data_csv, norm_csv, llc_path, video_id):
-    """
-    Set up the files for the main pipeline by copying to appropriate directories.
-    This enhanced version includes the skeleton and overlay videos.
-    
-    Args:
-        video_path: Path to the original video
-        skeleton_path: Path to the skeleton video
-        overlay_path: Path to the overlay video
-        data_csv: Path to the raw data CSV
-        norm_csv: Path to the normalized data CSV
-        llc_path: Path to the LLC file
-        video_id: Video ID
-    
-    Returns:
-        Path to the copied LLC file in the data/processed directory
-    """
-    print(f"[STEP 3] Setting up files for video_{video_id}")
-    
-    # Create directories
-    video_dir_processed = os.path.join(DATA_PROCESSED_DIR, f"video_{video_id}")
-    video_dir_videos = os.path.join(VIDEOS_DIR, f"video_{video_id}")
-    
-    ensure_directory_exists(video_dir_processed)
-    ensure_directory_exists(video_dir_videos)
-    
-    # Copy files to data/processed/video_X/
-    target_video = os.path.join(video_dir_processed, f"video_{video_id}.mp4")
-    target_skeleton = os.path.join(video_dir_processed, f"video_{video_id}_skeleton.mp4")
-    target_overlay = os.path.join(video_dir_processed, f"video_{video_id}_overlay.mp4")
-    target_data_csv = os.path.join(video_dir_processed, f"video_{video_id}_data.csv")
-    target_norm_csv = os.path.join(video_dir_processed, f"video_{video_id}_normalized.csv")
-    target_llc_processed = os.path.join(video_dir_processed, f"video_{video_id}.llc")
-    
-    # Check files exist before copying
-    file_statuses = {
-        "video": (os.path.exists(video_path), video_path, target_video),
-        "skeleton": (os.path.exists(skeleton_path), skeleton_path, target_skeleton),
-        "overlay": (os.path.exists(overlay_path), overlay_path, target_overlay),
-        "data_csv": (os.path.exists(data_csv), data_csv, target_data_csv),
-        "norm_csv": (os.path.exists(norm_csv), norm_csv, target_norm_csv),
-        "llc": (os.path.exists(llc_path), llc_path, target_llc_processed)
-    }
-    
-    for file_type, (exists, src, dest) in file_statuses.items():
-        if exists:
-            shutil.copy2(src, dest)
-            print(f"[INFO] Copied {file_type} to {dest}")
-        else:
-            print(f"[WARN] {file_type.capitalize()} file not found: {src}")
-    
-    # Copy files to videos/video_X/ directory as well
-    videos_dir_files = {
-        "video": (os.path.exists(video_path), video_path, os.path.join(video_dir_videos, f"video_{video_id}.mp4")),
-        "skeleton": (os.path.exists(skeleton_path), skeleton_path, os.path.join(video_dir_videos, f"video_{video_id}_skeleton.mp4")),
-        "overlay": (os.path.exists(overlay_path), overlay_path, os.path.join(video_dir_videos, f"video_{video_id}_overlay.mp4")),
-        "norm_csv": (os.path.exists(norm_csv), norm_csv, os.path.join(video_dir_videos, f"video_{video_id}_normalized.csv")),
-        "llc": (os.path.exists(llc_path), llc_path, os.path.join(video_dir_videos, f"video_{video_id}.llc"))
-    }
-    
-    for file_type, (exists, src, dest) in videos_dir_files.items():
-        if exists:
-            shutil.copy2(src, dest)
-    
-    # Create a status.txt file
-    status_file = os.path.join(video_dir_videos, "status.txt")
-    with open(status_file, 'w') as f:
-        f.write(f"original_filename: {os.path.basename(video_path)}\n")
-        f.write(f"processed_date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"has_raw_data: {os.path.exists(data_csv)}\n")
-        f.write(f"has_normalized_data: {os.path.exists(norm_csv)}\n")
-        f.write(f"has_skeleton: {os.path.exists(skeleton_path)}\n")
-        f.write(f"has_overlay: {os.path.exists(overlay_path)}\n")
-        f.write(f"has_llc: {os.path.exists(llc_path)}\n")
-        f.write("is_ready_for_clipping: True\n")
-        f.write("is_fully_processed: False\n")
-    
-    print(f"[DONE] Files set up for pipeline as video_{video_id}")
-    return target_llc_processed
-
 # -------------------------------------------------------------------------
 # INTEGRATED STROKE SEGMENTATION - Feature Engineering, Clip Generation,
 # Time Normalization, all in one place
@@ -601,9 +572,13 @@ def convert_llc_to_valid_json(text):
 
 def load_segments_from_llc(llc_path):
     """
-    Load manual cut segments from an LLC file.
-    The LLC file can be in JSON format or a simple text format with one segment per line.
-    Segments are inverted - we take the spaces BETWEEN the cutSegments defined in the LLC file.
+    Load segments from an LLC file and INVERT them to get stroke segments.
+    
+    In LosslessCut, "cutSegments" are the parts to CUT OUT, not keep.
+    We need to invert these to get the parts BETWEEN them, which are the actual strokes.
+    
+    Returns:
+        list of (start_frame, end_frame) tuples for the inverted segments (actual strokes)
     """
     if not os.path.exists(llc_path):
         print(f"[ERROR] LLC file not found: {llc_path}")
@@ -626,23 +601,23 @@ def load_segments_from_llc(llc_path):
                 print(f"Cleaned content: {cleaned_content[:100]}...")
                 return []
             
-            # Extract segments from JSON data
+            # Extract cut segments from JSON data - these are parts to remove
             cut_segments = []
             
             # Look for cutSegments in the JSON (most likely format)
             if "cutSegments" in data and isinstance(data["cutSegments"], list):
-                fps = 30.0  # Default FPS if needed for conversion
+                print(f"[INFO] Found {len(data['cutSegments'])} cutSegments in LLC file")
                 for segment in data["cutSegments"]:
                     if isinstance(segment, dict):
                         # Handle time in seconds (convert to frames)
                         if "start" in segment and "end" in segment:
                             start_time = float(segment["start"])
                             end_time = float(segment["end"])
-                            start_frame = int(start_time * fps)
-                            end_frame = int(end_time * fps)
+                            start_frame = int(start_time * FPS)
+                            end_frame = int(end_time * FPS)
                             cut_segments.append((start_frame, end_frame))
             
-            # If no cutSegments found, look for other formats
+            # If no cut segments found, look for other formats
             if not cut_segments:
                 # Look for segments directly in the JSON
                 for key in ["segments", "cuts", "strokes"]:
@@ -658,49 +633,53 @@ def load_segments_from_llc(llc_path):
                 print(f"[WARN] No cut segments found in JSON LLC file: {llc_path}")
                 return []
             
-            # Now INVERT the segments to get the spaces between cuts
-            # Sort the cut segments by start time
+            # INVERT the segments to get the parts BETWEEN the cut segments
+            # These are the actual stroke segments we want to keep
+            
+            # Sort cut segments by start time
             cut_segments.sort(key=lambda x: x[0])
             
-            # Get video duration (approximate from last segment or assume a large value)
-            video_duration_frames = cut_segments[-1][1] + 300  # Add some buffer frames
+            # Determine video duration (approximate from last segment or use a large value)
+            video_duration_frames = cut_segments[-1][1] + 300  # Add buffer frames
             
-            # Create segments from spaces between cuts
-            inverted_segments = []
+            # Create stroke segments from spaces between cut segments
+            stroke_segments = []
             prev_end = 0
             
             for start, end in cut_segments:
                 if start > prev_end:
-                    inverted_segments.append((prev_end, start - 1))
+                    # This is a part to keep (between cuts)
+                    stroke_segments.append((prev_end, start - 1))
                 prev_end = end + 1
             
             # Add final segment if needed
             if prev_end < video_duration_frames:
-                inverted_segments.append((prev_end, video_duration_frames))
+                stroke_segments.append((prev_end, video_duration_frames))
             
-            print(f"[INFO] Inverted {len(cut_segments)} cut segments to {len(inverted_segments)} keep segments")
-            return inverted_segments
+            print(f"[INFO] Inverted {len(cut_segments)} cut segments into {len(stroke_segments)} stroke segments")
+            return stroke_segments
             
         except Exception as e:
             print(f"[ERROR] Failed to process LLC file: {e}")
             return []
     else:
-        # Assume simple text format with one segment per line: "start_frame,end_frame"
+        # Assume simple text format with one segment per line
+        # For text format, assume these are already stroke segments, not cuts
         segments = []
         lines = llc_content.split("\n")
         for line in lines:
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            
-            try:
-                parts = line.split(",")
-                start_frame = int(parts[0])
-                end_frame = int(parts[1])
-                if start_frame < end_frame:
-                    segments.append((start_frame, end_frame))
-            except (ValueError, IndexError) as e:
-                print(f"[WARN] Error parsing line in LLC file: {line} - {e}")
+            if line and not line.startswith("#"):
+                try:
+                    parts = line.split()
+                    if len(parts) >= 2:  # At least start_time and end_time
+                        start_time = float(parts[0])
+                        end_time = float(parts[1])
+                        start_frame = int(start_time * FPS)
+                        end_frame = int(end_time * FPS)
+                        segments.append((start_frame, end_frame))
+                except (ValueError, IndexError) as e:
+                    print(f"[WARN] Error parsing line in LLC file: {line} - {e}")
         
         if not segments:
             print(f"[WARN] No segments found in text LLC file: {llc_path}")
@@ -1063,30 +1042,20 @@ def process_video_folder_for_segmentation(folder_path):
 
 def run_stroke_segmentation(video_path=None, folder_mode=False):
     """
-    Run stroke segmentation on a video or folder of videos.
+    Run stroke segmentation on a video to create individual stroke clips.
     
-    This function processes a tennis video to identify stroke segments,
-    extract clips, and save normalized data.
+    In LosslessCut, the "cutSegments" define parts to cut out (non-strokes).
+    This function extracts the parts BETWEEN those cut segments, which are
+    the actual tennis strokes we want to keep and analyze.
     
     Args:
-        video_path (str): Path to the video file. If None and folder_mode is True,
-                          will process all videos in the default processing folder.
-        folder_mode (bool): Whether to process all videos in a folder.
+        video_path (str): Path to the video file
+        folder_mode (bool): Whether to process all videos in a folder
                             
     Returns:
         bool: True if successful, False otherwise
     """
     try:
-        # Check if we're processing a folder
-        if folder_mode:
-            if video_path and os.path.isdir(video_path):
-                folder_path = video_path
-            else:
-                folder_path = PROCESSING_FOLDER
-            
-            print(f"[INFO] Processing folder: {folder_path}")
-            return process_video_folder_for_segmentation(folder_path)
-        
         # Process a single video
         if not video_path:
             print("[ERROR] No video path provided")
@@ -1098,14 +1067,13 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
         
         # Define paths
         llc_path = os.path.join(video_dir, f"{video_name}.llc")
-        pose_csv_path = os.path.join(video_dir, f"{video_name}_normalized.csv")
-        labeled_csv_path = os.path.join(video_dir, f"{video_name}_labeled.csv")
         clips_folder = os.path.join(video_dir, f"{video_name}_clips")
-        norm_folder = os.path.join(video_dir, f"{video_name}_norm")
         
         # Create folders if they don't exist
         os.makedirs(clips_folder, exist_ok=True)
-        os.makedirs(norm_folder, exist_ok=True)
+        
+        print(f"[INFO] Running segmentation on {video_path}")
+        print(f"[INFO] Clips will be saved to {clips_folder}")
         
         # Check if necessary files exist
         if not os.path.exists(video_path):
@@ -1116,58 +1084,93 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
             print(f"[ERROR] LLC file not found: {llc_path}")
             return False
         
-        if not os.path.exists(pose_csv_path):
-            print(f"[ERROR] Pose CSV file not found: {pose_csv_path}")
-            return False
-        
-        # Step 1: Create labeled CSV with stroke labels
-        print(f"[INFO] Creating labeled CSV for {video_name}")
-        if not create_frame_labels(pose_csv_path, llc_path, labeled_csv_path):
-            print(f"[ERROR] Failed to create labeled CSV for {video_name}")
-            return False
-        
-        # Step 2: Load labels and identify stroke segments
-        labels = load_labels(labeled_csv_path)
-        if not labels:
-            print(f"[ERROR] No labels found in {labeled_csv_path}")
-            return False
-        
-        segments = get_stroke_segments(labels)
+        # Step 1: Load segments directly from LLC file
+        segments = load_segments_from_llc(llc_path)
         if not segments:
-            print(f"[INFO] No stroke segments found in {video_name}")
+            print(f"[ERROR] No segments found in LLC file: {llc_path}")
             return False
         
-        # Step 3: Create video clips for each segment (all video types)
-        print(f"[INFO] Creating {len(segments)} clip(s) for {video_name}")
+        print(f"[INFO] Found {len(segments)} segments in LLC file")
         
+        # Step 2: Create video clips for each segment (all video types)
         # Get video fps
         cap = cv2.VideoCapture(video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 30.0  # Default to 30 fps if not available
+        fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 30.0
         cap.release()
         
-        # Clip all three video types (main, skeleton, overlay)
-        if not enhanced_clip_video_segments(video_dir, video_name, segments, fps, clips_folder):
-            print(f"[ERROR] Failed to clip video segments for {video_name}")
-            return False
+        # Find all available video files
+        main_video = video_path
+        skeleton_video = os.path.join(video_dir, f"{video_name}_skeleton.mp4")
+        overlay_video = os.path.join(video_dir, f"{video_name}_overlay.mp4")
         
-        # Step 4: Extract corresponding CSV data for each clip
-        if not extract_clip_csv(labeled_csv_path, segments, clips_folder):
-            print(f"[ERROR] Failed to extract clip CSVs for {video_name}")
-            return False
+        # Track which video types exist
+        has_skeleton = os.path.exists(skeleton_video)
+        has_overlay = os.path.exists(overlay_video)
         
-        # Step 5: Time-normalize the CSVs
-        print(f"[INFO] Time-normalizing CSVs for {video_name}")
-        clip_csv_files = [f for f in os.listdir(clips_folder) if f.endswith('.csv')]
+        print(f"[INFO] Processing {len(segments)} segments from main video: {os.path.basename(main_video)}")
+        if has_skeleton:
+            print(f"[INFO] Skeleton video found: {os.path.basename(skeleton_video)}")
+        if has_overlay:
+            print(f"[INFO] Overlay video found: {os.path.basename(overlay_video)}")
         
-        for csv_file in clip_csv_files:
-            csv_path = os.path.join(clips_folder, csv_file)
-            norm_path = os.path.join(norm_folder, csv_file.replace('.csv', '_norm.csv'))
+        # Process each segment
+        for i, (start_frame, end_frame) in enumerate(segments):
+            segment_num = i + 1
+            start_time = start_frame / fps
+            end_time = end_frame / fps
+            duration = end_time - start_time
             
-            if not time_normalize_csv(csv_path, norm_path):
-                print(f"[ERROR] Failed to normalize CSV: {csv_file}")
-                continue
+            print(f"[INFO] Processing segment {segment_num}: {start_time:.2f}s to {end_time:.2f}s")
+            
+            # Define output files
+            main_output = os.path.join(clips_folder, f"stroke_{segment_num}.mp4")
+            skeleton_output = os.path.join(clips_folder, f"stroke_{segment_num}_skeleton.mp4")
+            overlay_output = os.path.join(clips_folder, f"stroke_{segment_num}_overlay.mp4")
+            
+            # Skip existing files unless forced to reprocess
+            if not os.path.exists(main_output):
+                try:
+                    # Clip main video
+                    cmd = [
+                        "ffmpeg", "-y", "-i", main_video, 
+                        "-ss", str(start_time), "-t", str(duration),
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        main_output
+                    ]
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print(f"[INFO] Created main clip: {os.path.basename(main_output)}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to clip main video: {e}")
+            
+            # Clip skeleton video if it exists
+            if has_skeleton and not os.path.exists(skeleton_output):
+                try:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", skeleton_video, 
+                        "-ss", str(start_time), "-t", str(duration),
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        skeleton_output
+                    ]
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print(f"[INFO] Created skeleton clip: {os.path.basename(skeleton_output)}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to clip skeleton video: {e}")
+            
+            # Clip overlay video if it exists
+            if has_overlay and not os.path.exists(overlay_output):
+                try:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", overlay_video, 
+                        "-ss", str(start_time), "-t", str(duration),
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        overlay_output
+                    ]
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print(f"[INFO] Created overlay clip: {os.path.basename(overlay_output)}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to clip overlay video: {e}")
         
-        # Step 6: Update the status file
+        # Step 3: Update the status file
         status_path = os.path.join(video_dir, "status.txt")
         try:
             if os.path.exists(status_path):
@@ -1205,8 +1208,7 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
 
 def manually_copy_clips_to_library(video_id):
     """
-    Manually copy clips from video_X_clips folder to the Strokes Library.
-    Enhanced version that handles regular, skeleton, and overlay videos.
+    Copy clips from video_X_clips folder to the Strokes Library.
     
     Args:
         video_id: Video ID
@@ -1214,22 +1216,24 @@ def manually_copy_clips_to_library(video_id):
     Returns:
         List of strokes that were created
     """
-    print(f"[STEP 5] Copying clips to Strokes Library for video_{video_id}")
+    print(f"[INFO] Copying clips to Strokes Library for video_{video_id}")
     
     # Define base paths
     video_dir = os.path.join(VIDEOS_DIR, f"video_{video_id}")
     clips_folder = os.path.join(video_dir, f"video_{video_id}_clips")
     
     if not os.path.exists(clips_folder):
-        print(f"Clips folder not found: {clips_folder}")
+        print(f"[ERROR] Clips folder not found: {clips_folder}")
         return []
+    
+    print(f"[INFO] Looking for clips in: {clips_folder}")
     
     # Find normalized CSV from the video directory
     video_norm_csv = os.path.join(video_dir, f"video_{video_id}_normalized.csv")
     if not os.path.exists(video_norm_csv):
-        print(f"Warning: Normalized CSV not found: {video_norm_csv}")
+        print(f"[WARNING] Normalized CSV not found: {video_norm_csv}")
     else:
-        print(f"Found normalized CSV: {video_norm_csv}")
+        print(f"[INFO] Found normalized CSV data")
     
     # Get existing stroke IDs from the Strokes Library
     # to determine the next available stroke ID
@@ -1242,42 +1246,42 @@ def manually_copy_clips_to_library(video_id):
         try:
             stroke_ids = [int(os.path.basename(s).split("_")[1]) for s in existing_strokes]
             next_stroke_id = max(stroke_ids) + 1
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as e:
+            print(f"[WARN] Error finding next stroke ID: {e}, using default: {next_stroke_id}")
     
-    print(f"Next available stroke ID: {next_stroke_id}")
+    print(f"[INFO] Next available stroke ID: {next_stroke_id}")
     
     # Find all clip files
-    clip_files = {}
-    
-    # Regular clip files
-    mp4_files = [f for f in os.listdir(clips_folder) if f.endswith('.mp4') and not (f.endswith('_skeleton.mp4') or f.endswith('_overlay.mp4'))]
-    csv_files = [f for f in os.listdir(clips_folder) if f.endswith('.csv')]
-    
-    # Also look for skeleton and overlay clips
-    skeleton_files = [f for f in os.listdir(clips_folder) if f.endswith('_skeleton.mp4')]
-    overlay_files = [f for f in os.listdir(clips_folder) if f.endswith('_overlay.mp4')]
-    
-    print(f"Found {len(mp4_files)} regular MP4 files, {len(skeleton_files)} skeleton files, {len(overlay_files)} overlay files, and {len(csv_files)} CSV files")
-    
+    try:
+        clip_files = os.listdir(clips_folder)
+    except Exception as e:
+        print(f"[ERROR] Failed to list clips folder contents: {e}")
+        return []
+        
+    if not clip_files:
+        print(f"[ERROR] No clip files found in {clips_folder}")
+        return []
+        
     # Group files by stroke number
     strokes = {}
+    
+    # Check regular MP4 files
+    mp4_files = [f for f in clip_files if f.endswith('.mp4') and not (f.endswith('_skeleton.mp4') or f.endswith('_overlay.mp4'))]
+    print(f"[INFO] Found {len(mp4_files)} regular MP4 files")
+    
+    # Look for skeleton and overlay clips
+    skeleton_files = [f for f in clip_files if f.endswith('_skeleton.mp4')]
+    overlay_files = [f for f in clip_files if f.endswith('_overlay.mp4')]
+    print(f"[INFO] Found {len(skeleton_files)} skeleton files and {len(overlay_files)} overlay files")
+    
+    # Group files by stroke number
     for mp4_file in mp4_files:
         match = re.match(r'stroke_(\d+)\.mp4', mp4_file)
         if match:
             stroke_num = match.group(1)
             if stroke_num not in strokes:
-                strokes[stroke_num] = {'mp4': None, 'csv': None, 'skeleton': None, 'overlay': None}
+                strokes[stroke_num] = {'mp4': None, 'skeleton': None, 'overlay': None}
             strokes[stroke_num]['mp4'] = mp4_file
-    
-    # Add CSV files
-    for csv_file in csv_files:
-        match = re.match(r'stroke_(\d+)\.csv', csv_file)
-        if match:
-            stroke_num = match.group(1)
-            if stroke_num not in strokes:
-                strokes[stroke_num] = {'mp4': None, 'csv': None, 'skeleton': None, 'overlay': None}
-            strokes[stroke_num]['csv'] = csv_file
     
     # Add skeleton files
     for skeleton_file in skeleton_files:
@@ -1285,7 +1289,7 @@ def manually_copy_clips_to_library(video_id):
         if match:
             stroke_num = match.group(1)
             if stroke_num not in strokes:
-                strokes[stroke_num] = {'mp4': None, 'csv': None, 'skeleton': None, 'overlay': None}
+                strokes[stroke_num] = {'mp4': None, 'skeleton': None, 'overlay': None}
             strokes[stroke_num]['skeleton'] = skeleton_file
     
     # Add overlay files
@@ -1294,10 +1298,10 @@ def manually_copy_clips_to_library(video_id):
         if match:
             stroke_num = match.group(1)
             if stroke_num not in strokes:
-                strokes[stroke_num] = {'mp4': None, 'csv': None, 'skeleton': None, 'overlay': None}
+                strokes[stroke_num] = {'mp4': None, 'skeleton': None, 'overlay': None}
             strokes[stroke_num]['overlay'] = overlay_file
     
-    print(f"Found {len(strokes)} paired clips to process")
+    print(f"[INFO] Found {len(strokes)} strokes to process")
     
     created_strokes = []
     
@@ -1307,81 +1311,91 @@ def manually_copy_clips_to_library(video_id):
         next_stroke_id += 1
         
         stroke_folder = os.path.join(STROKES_LIBRARY, f"stroke_{stroke_id}")
-        os.makedirs(stroke_folder, exist_ok=True)
+        try:
+            os.makedirs(stroke_folder, exist_ok=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to create stroke folder: {e}")
+            continue
         
-        print(f"Creating stroke_{stroke_id} in {stroke_folder}")
+        print(f"[INFO] Creating stroke_{stroke_id} in Strokes Library")
         
-        # Set up path variables
-        clip_file_path = None
-        csv_file_path = None
+        # Track if we successfully created this stroke
+        success = False
         
         # Copy regular MP4 if available
         if files['mp4']:
             src_file = os.path.join(clips_folder, files['mp4'])
             dest_file = os.path.join(stroke_folder, "stroke_clip.mp4")
-            shutil.copy2(src_file, dest_file)
-            print(f"Copied {files['mp4']} to {dest_file}")
-            clip_file_path = dest_file
-            
-            # Also create a "raw" version of the clip for reference
-            raw_file = os.path.join(stroke_folder, "stroke_raw.mp4")
-            shutil.copy2(src_file, raw_file)
-            print(f"Created raw video: {raw_file}")
+            if os.path.exists(src_file):
+                try:
+                    shutil.copy2(src_file, dest_file)
+                    print(f"[INFO] Copied main video clip")
+                    success = True
+                    
+                    # Also create a "raw" version
+                    raw_file = os.path.join(stroke_folder, "stroke_raw.mp4")
+                    shutil.copy2(src_file, raw_file)
+                    print(f"[INFO] Created raw video reference")
+                except Exception as e:
+                    print(f"[ERROR] Failed to copy main clip: {e}")
         
         # Copy skeleton MP4 if available
         if files['skeleton']:
             src_file = os.path.join(clips_folder, files['skeleton'])
             dest_file = os.path.join(stroke_folder, "stroke_skeleton.mp4")
-            shutil.copy2(src_file, dest_file)
-            print(f"Copied {files['skeleton']} to {dest_file}")
+            if os.path.exists(src_file):
+                try:
+                    shutil.copy2(src_file, dest_file)
+                    print(f"[INFO] Copied skeleton video clip")
+                except Exception as e:
+                    print(f"[ERROR] Failed to copy skeleton clip: {e}")
         
         # Copy overlay MP4 if available
         if files['overlay']:
             src_file = os.path.join(clips_folder, files['overlay'])
             dest_file = os.path.join(stroke_folder, "stroke_overlay.mp4")
-            shutil.copy2(src_file, dest_file)
-            print(f"Copied {files['overlay']} to {dest_file}")
-        
-        # Copy CSV if available
-        if files['csv']:
-            src_file = os.path.join(clips_folder, files['csv'])
-            dest_file = os.path.join(stroke_folder, "stroke.csv")
-            shutil.copy2(src_file, dest_file)
-            print(f"Copied {files['csv']} to {dest_file}")
-            csv_file_path = dest_file
+            if os.path.exists(src_file):
+                try:
+                    shutil.copy2(src_file, dest_file)
+                    print(f"[INFO] Copied overlay video clip")
+                except Exception as e:
+                    print(f"[ERROR] Failed to copy overlay clip: {e}")
             
-            # Create a normalized version by copying the clip-specific CSV
-            norm_file = os.path.join(stroke_folder, "stroke_norm.csv")
-            shutil.copy2(src_file, norm_file)
-            print(f"Created normalized CSV: {norm_file}")
-            
-            # If we have the full video normalized CSV, also copy that
-            if os.path.exists(video_norm_csv):
-                full_norm_file = os.path.join(stroke_folder, "stroke_full_norm.csv")
-                shutil.copy2(video_norm_csv, full_norm_file)
-                print(f"Added full normalized data: {full_norm_file}")
+        # Copy normalized CSV if available
+        if os.path.exists(video_norm_csv):
+            dest_file = os.path.join(stroke_folder, "stroke_norm.csv")
+            try:
+                shutil.copy2(video_norm_csv, dest_file)
+                print(f"[INFO] Added normalized pose data")
+            except Exception as e:
+                print(f"[ERROR] Failed to copy normalized data: {e}")
         
         # Create source info file
         source_info_path = os.path.join(stroke_folder, "source_info.txt")
-        with open(source_info_path, 'w') as f:
-            f.write(f"Source Video: video_{video_id}\n")
-            f.write(f"Stroke Number in Video: {stroke_num}\n")
-            f.write(f"Created by merged_tennis_processor.py\n")
-            f.write(f"Created: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        try:
+            with open(source_info_path, 'w') as f:
+                f.write(f"Source Video: video_{video_id}\n")
+                f.write(f"Stroke Number in Video: {stroke_num}\n")
+                f.write(f"Created by merged_tennis_processor.py\n")
+                f.write(f"Created: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to create source info file: {e}")
         
-        created_strokes.append(f"stroke_{stroke_id}")
+        if success:
+            created_strokes.append(f"stroke_{stroke_id}")
     
     print(f"[DONE] Created {len(created_strokes)} strokes in the Strokes Library")
-    return created_strokes 
+    return created_strokes
 
-def process_single_video(video_path, llc_path=None, video_id=None):
+def process_single_video(video_path, llc_path=None, video_id=None, cleanup=True):
     """
     Process a single video with enhanced pose detection, visualization, and segmentation
     
     Args:
-        video_path: Path to the video file
+        video_path: Path to the input video
         llc_path: Path to the LLC file
         video_id: Video ID to use
+        cleanup: Whether to clean up intermediate files (default: True)
         
     Returns:
         bool: Success or failure
@@ -1391,50 +1405,112 @@ def process_single_video(video_path, llc_path=None, video_id=None):
         if video_id is None:
             video_id = get_next_video_id()
         
-        # Get output prefix
-        output_prefix = f"video_{video_id}"
+        videos_dir_path = os.path.join(VIDEOS_DIR, f"video_{video_id}")
+        ensure_directory_exists(videos_dir_path)
         
-        print(f"\n=== PROCESSING VIDEO AS {output_prefix} ===")
+        # Target paths in videos directory
+        target_video = os.path.join(videos_dir_path, f"video_{video_id}.mp4")
+        target_llc = os.path.join(videos_dir_path, f"video_{video_id}.llc")
+        
+        print(f"\n=== PROCESSING VIDEO AS video_{video_id} ===")
+        
+        # Copy or move original video and LLC file to videos directory
+        if os.path.abspath(video_path) != os.path.abspath(target_video):
+            try:
+                shutil.copy2(video_path, target_video)
+                print(f"[INFO] Copied original video to {target_video}")
+            except Exception as e:
+                print(f"[ERROR] Failed to copy video: {e}")
+                return False
+        
+        if llc_path and os.path.exists(llc_path) and os.path.abspath(llc_path) != os.path.abspath(target_llc):
+            try:
+                shutil.copy2(llc_path, target_llc)
+                print(f"[INFO] Copied LLC file to {target_llc}")
+            except Exception as e:
+                print(f"[ERROR] Failed to copy LLC file: {e}")
+                return False
         
         # Step 1: Process video with MediaPipe to create enhanced visualizations
+        # Output directly to videos directory
         print(f"[STEP 1] Processing video with MediaPipe")
         skeleton_output, overlay_output, landmarks_dict_list, csv_output = process_video_with_mediapipe(
-            video_path, output_prefix)
+            target_video, video_id=video_id)
         
         if not csv_output or not os.path.exists(csv_output):
             print(f"[ERROR] Failed to process video or create CSV output")
             return False
         
-        # Step 2: Normalize data
-        norm_csv = f"{OUTPUT_DIR}/{output_prefix}_normalized.csv"
-        normalize_pose_data(csv_output, norm_csv)
+        # Step 2: Normalize data directly to videos directory
+        print(f"[STEP 2] Normalizing pose data")
+        norm_csv = normalize_pose_data(csv_output, video_id=video_id)
         
-        # If LLC path is provided, setup for pipeline
-        if llc_path and os.path.exists(llc_path):
-            # Step 3: Set up files for pipeline
-            llc_processed = setup_for_pipeline(
-                video_path, skeleton_output, overlay_output, 
-                csv_output, norm_csv, llc_path, video_id
-            )
-            
-            # Step 4: Run stroke segmentation if LLC file has valid annotations
-            if check_llc_file(llc_path):
-                print(f"[INFO] Valid LLC file found, running stroke segmentation")
-                run_stroke_segmentation()
+        if not norm_csv or not os.path.exists(norm_csv):
+            print(f"[ERROR] Failed to normalize data")
+            return False
+        
+        # Create/update the status file with all information
+        status_file = os.path.join(videos_dir_path, "status.txt")
+        try:
+            with open(status_file, 'w') as f:
+                f.write(f"original_filename: {os.path.basename(video_path)}\n")
+                f.write(f"processed_date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"has_normalized_data: True\n")
+                f.write(f"has_skeleton: {os.path.exists(skeleton_output)}\n")
+                f.write(f"has_overlay: {os.path.exists(overlay_output)}\n")
+                f.write(f"has_llc: {os.path.exists(target_llc)}\n")
+                f.write("is_ready_for_clipping: True\n")
+                f.write("is_fully_processed: False\n")
+        except Exception as e:
+            print(f"[WARN] Failed to create status file: {e}")
+        
+        # If LLC path is provided, run segmentation
+        if llc_path and os.path.exists(target_llc):
+            # Check if LLC file has valid annotations
+            if check_llc_file(target_llc):
+                print(f"[STEP 3] Running stroke segmentation")
                 
-                # Step 5: Ensure strokes are copied to the library
-                created_strokes = manually_copy_clips_to_library(video_id)
-                if created_strokes:
-                    print(f"[INFO] Successfully created {len(created_strokes)} strokes in the library.")
+                # Run segmentation with the correct video path
+                if os.path.exists(target_video):
+                    success = run_stroke_segmentation(target_video)
+                    
+                    if success:
+                        # Create strokes in library
+                        print(f"[STEP 4] Copying strokes to library")
+                        created_strokes = manually_copy_clips_to_library(video_id)
+                        
+                        if created_strokes:
+                            print(f"[INFO] Successfully created {len(created_strokes)} strokes in the library.")
+                            
+                            # Update status file to mark as fully processed
+                            try:
+                                with open(status_file, 'r') as f:
+                                    status_data = f.read()
+                                
+                                status_data = re.sub(r"is_fully_processed:.*", "is_fully_processed: True", status_data)
+                                
+                                with open(status_file, 'w') as f:
+                                    f.write(status_data)
+                            except Exception as e:
+                                print(f"[WARN] Failed to update status file: {e}")
+                            
+                            # Clean up intermediate files if requested
+                            if cleanup:
+                                print(f"[STEP 5] Cleaning up intermediate files")
+                                cleanup_intermediate_files(video_id)
+                        else:
+                            print(f"[WARN] No strokes were created in the library.")
+                    else:
+                        print(f"[ERROR] Segmentation failed for video_{video_id}")
                 else:
-                    print(f"[WARN] No strokes were created in the library. Please check the segmentation output.")
+                    print(f"[ERROR] Video file not found: {target_video}")
             else:
                 print(f"[WARN] LLC file has no valid stroke annotations, skipping segmentation")
         else:
-            print(f"[WARN] No LLC file provided, skipping pipeline setup and segmentation")
+            print(f"[WARN] No LLC file provided, skipping segmentation")
         
         print(f"\n=== PROCESSING COMPLETE ===")
-        print(f"Processed {os.path.basename(video_path)} as {output_prefix}")
+        print(f"Processed {os.path.basename(video_path)} as video_{video_id}")
         print(f"Results available in Strokes_Library directory")
         
         return True
@@ -1484,16 +1560,12 @@ def main():
     """Main function that processes all video/LLC pairs in the unprocessed videos folder."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Tennis Video Processor')
-    parser.add_argument('--input_path', type=str, help='Path to input video or folder')
-    parser.add_argument('--mode', type=str, default='all', 
-                        choices=['all', 'pose', 'clip', 'normalize', 'segment'], 
-                        help='Processing mode')
-    parser.add_argument('--device', type=str, default='cpu', 
-                        choices=['cpu', 'cuda'], 
-                        help='Device to use for pose estimation')
+    parser.add_argument('--input_path', type=str, help='Path to input video')
+    parser.add_argument('--llc_path', type=str, help='Path to LLC file (if different from default)')
     parser.add_argument('--video-id', type=int, help='Specify a starting video ID instead of auto-detecting')
     parser.add_argument('--single', action='store_true', help='Process only the first video found')
     parser.add_argument('--segment-video-id', type=int, help='Run segmentation on a specific video ID')
+    parser.add_argument('--no-cleanup', action='store_true', help='Do not clean up intermediate files after processing')
     
     args = parser.parse_args()
     
@@ -1501,47 +1573,50 @@ def main():
     ensure_directory_exists(UNPROCESSED_DIR)
     ensure_directory_exists(VIDEOS_DIR)
     ensure_directory_exists(STROKES_LIBRARY)
-    ensure_directory_exists(DATA_PROCESSED_DIR)
     ensure_directory_exists(OUTPUT_DIR)
     
     # If segment-video-id is provided, run segmentation on that specific video
     if args.segment_video_id is not None:
-        return 0 if run_segmentation_on_video_id(args.segment_video_id) else 1
+        video_path = os.path.join(VIDEOS_DIR, f"video_{args.segment_video_id}", f"video_{args.segment_video_id}.mp4")
+        if not os.path.exists(video_path):
+            print(f"[ERROR] Video not found: {video_path}")
+            return 1
+        
+        success = run_stroke_segmentation(video_path)
+        if success:
+            created_strokes = manually_copy_clips_to_library(args.segment_video_id)
+            if created_strokes:
+                print(f"[INFO] Created {len(created_strokes)} strokes")
+            if not args.no_cleanup:
+                cleanup_intermediate_files(args.segment_video_id)
+        return 0 if success else 1
     
-    # If input path is provided, use the previous mode-based processing
+    # If input path is provided, process just that video
     if args.input_path:
-        # Process based on mode
-        if args.mode == 'all':
-            if os.path.isdir(args.input_path):
-                process_video_folder(args.input_path, device=args.device)
+        if not os.path.exists(args.input_path):
+            print(f"[ERROR] Input video not found: {args.input_path}")
+            return 1
+            
+        # If LLC path is not provided, look for one with same name
+        llc_path = args.llc_path
+        if not llc_path:
+            base_path = os.path.splitext(args.input_path)[0]
+            potential_llc = f"{base_path}.llc"
+            if os.path.exists(potential_llc):
+                llc_path = potential_llc
+                print(f"[INFO] Found LLC file: {llc_path}")
             else:
-                process_single_video(args.input_path, device=args.device)
+                print(f"[WARN] No LLC file found for {args.input_path}")
         
-        elif args.mode == 'pose':
-            if os.path.isdir(args.input_path):
-                run_pose_estimation_on_folder(args.input_path, device=args.device)
-            else:
-                run_pose_estimation_on_video(args.input_path, device=args.device)
+        # Process the video (cleanup is true by default unless --no-cleanup is specified)
+        success = process_single_video(
+            args.input_path, 
+            llc_path=llc_path, 
+            video_id=args.video_id,
+            cleanup=not args.no_cleanup
+        )
         
-        elif args.mode == 'clip':
-            if os.path.isdir(args.input_path):
-                run_clip_extraction_on_folder(args.input_path)
-            else:
-                run_clip_extraction_on_video(args.input_path)
-        
-        elif args.mode == 'normalize':
-            if os.path.isdir(args.input_path):
-                run_normalization_on_folder(args.input_path)
-            else:
-                run_normalization_on_video(args.input_path)
-        
-        elif args.mode == 'segment':
-            if os.path.isdir(args.input_path):
-                process_video_folder_for_segmentation(args.input_path)
-            else:
-                run_stroke_segmentation(args.input_path)
-        
-        return
+        return 0 if success else 1
     
     # If no input path is provided, look for video+LLC pairs in the unprocessed directory
     video_llc_pairs = get_video_and_llc_paths()
@@ -1560,7 +1635,15 @@ def main():
     
     for video_path, llc_path in video_llc_pairs:
         current_video_id = video_id + processed_count
-        success = process_single_video(video_path, llc_path, current_video_id)
+        print(f"\n[INFO] Processing pair {processed_count+1}/{len(video_llc_pairs)}: {os.path.basename(video_path)}")
+        
+        # Process the video (cleanup is true by default unless --no-cleanup is specified)
+        success = process_single_video(
+            video_path, 
+            llc_path=llc_path, 
+            video_id=current_video_id,
+            cleanup=not args.no_cleanup
+        )
         
         if success:
             processed_count += 1
@@ -1576,9 +1659,9 @@ def main():
             try:
                 shutil.move(video_path, archive_video)
                 shutil.move(llc_path, archive_llc)
-                print(f"Moved processed files to archive folder.")
+                print(f"[INFO] Moved processed files to archive folder")
             except Exception as e:
-                print(f"Warning: Could not move processed files to archive: {e}")
+                print(f"[WARN] Could not move processed files to archive: {e}")
         
         if args.single:
             break  # Only process the first video if --single flag is set
@@ -1588,6 +1671,66 @@ def main():
     print(f"Check the {STROKES_LIBRARY} directory for results.")
     
     return 0
+
+def cleanup_intermediate_files(video_id):
+    """
+    Clean up intermediate files and folders after processing to save disk space.
+    
+    This function removes:
+    1. Temporary files in the Output directory
+    2. Clips folder in the videos/video_X directory (after copying to Strokes_Library)
+    
+    Args:
+        video_id: Video ID to clean up
+        
+    Returns:
+        bool: True if cleanup was successful, False otherwise
+    """
+    try:
+        print(f"[INFO] Cleaning up intermediate files for video_{video_id}")
+        
+        # Clean up Output directory
+        output_prefix = f"video_{video_id}"
+        output_files = [
+            f"{OUTPUT_DIR}/{output_prefix}_skeleton.mp4",
+            f"{OUTPUT_DIR}/{output_prefix}_overlay.mp4",
+            f"{OUTPUT_DIR}/{output_prefix}_data.csv",
+            f"{OUTPUT_DIR}/{output_prefix}_normalized.csv"
+        ]
+        
+        output_removed = 0
+        for file_path in output_files:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    output_removed += 1
+                    print(f"[INFO] Removed {file_path}")
+                except Exception as e:
+                    print(f"[WARN] Failed to remove {file_path}: {e}")
+        
+        # Remove clips folder if it exists in videos directory
+        video_dir = os.path.join(VIDEOS_DIR, f"video_{video_id}")
+        clips_folder = os.path.join(video_dir, f"video_{video_id}_clips")
+        
+        clips_removed = False
+        if os.path.exists(clips_folder):
+            try:
+                shutil.rmtree(clips_folder)
+                clips_removed = True
+                print(f"[INFO] Removed clips folder: {clips_folder}")
+            except Exception as e:
+                print(f"[WARN] Failed to remove clips folder: {e}")
+        
+        print(f"[DONE] Cleaned up intermediate files for video_{video_id}")
+        print(f"       - Removed {output_removed} temporary files from Output directory")
+        print(f"       - Clips folder removed: {clips_removed}")
+        
+        return True
+    except Exception as e:
+        print(f"[ERROR] Error during cleanup: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 if __name__ == "__main__":
     sys.exit(main()) 

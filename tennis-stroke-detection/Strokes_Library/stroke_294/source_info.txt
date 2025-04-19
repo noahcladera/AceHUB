@@ -1,2 +1,0 @@
-Source Video: video_32
-Stroke Number in Video: 8
