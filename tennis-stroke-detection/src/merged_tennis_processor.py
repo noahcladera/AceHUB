@@ -21,7 +21,7 @@ Example:
     python merged_tennis_processor.py --single
 
 Dependencies:
-    pip install opencv-python mediapipe numpy pandas
+    pip install opencv-python mediapipe numpy pandas scipy tqdm
 """
 
 import os
@@ -41,6 +41,42 @@ import json
 import re
 from scipy.interpolate import interp1d
 
+# Try to import tqdm, but provide fallback if not available
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    print("[INFO] tqdm not found. Install with 'pip install tqdm' for progress bars.")
+    print("       Falling back to text-based progress reporting.")
+    
+    # Simple text-based progress class as fallback
+    class SimpleProgress:
+        def __init__(self, total, desc, unit):
+            self.total = total
+            self.desc = desc
+            self.unit = unit
+            self.n = 0
+            self.start_time = time.time()
+            self._print_progress()
+            
+        def update(self, n=1):
+            self.n += n
+            if self.n % max(1, self.total // 100) == 0 or self.n == self.total:
+                self._print_progress()
+                
+        def _print_progress(self):
+            percent = (self.n / self.total) * 100 if self.total > 0 else 0
+            elapsed = time.time() - self.start_time
+            rate = self.n / elapsed if elapsed > 0 else 0
+            print(f"\r{self.desc}: {self.n}/{self.total} {self.unit}s ({percent:.1f}%) [{rate:.1f} {self.unit}s/s]", end="")
+            
+        def close(self):
+            print()  # New line after progress
+    
+    # Replace tqdm with our simple version
+    tqdm = SimpleProgress
+
 # Directory constants
 UNPROCESSED_DIR = "unprocessed_videos"
 VIDEOS_DIR = "videos"
@@ -48,20 +84,29 @@ STROKES_LIBRARY = "Strokes_Library"
 OUTPUT_DIR = "Output"  # Temporary directory for processing
 
 # Visualization constants
-# Color configuration
-COLOR_LEFT = (255, 0, 0)  # Blue in BGR
-COLOR_RIGHT = (0, 0, 255)  # Red in BGR 
-COLOR_CENTER = (0, 255, 0)  # Green in BGR
+# Color configuration - More vibrant, presentation-friendly colors
+COLOR_LEFT = (255, 128, 0)  # Orange-blue in BGR
+COLOR_RIGHT = (0, 76, 255)  # Bright red in BGR 
+COLOR_CENTER = (0, 200, 100)  # Teal-green in BGR
 
 # Define pose connections for color-coding
 POSE_CONNECTIONS_LEFT = [(11, 13), (13, 15), (23, 25), (25, 27)]
 POSE_CONNECTIONS_RIGHT = [(12, 14), (14, 16), (24, 26), (26, 28)]
-POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24)]
+POSE_CONNECTIONS_CENTER = [(11, 12), (11, 23), (12, 24), (23, 24)]
 
-# Drawing configuration
-LINE_THICKNESS = 4
-CIRCLE_RADIUS = 6
+# Drawing configuration - Enhanced for better visibility
+LINE_THICKNESS = 3  # Reduced from 4
+CIRCLE_RADIUS = 5  # Reduced from 8
 LINE_TYPE = cv2.LINE_AA
+
+# Varying thickness for different body parts
+LIMB_THICKNESS = 4  # Reduced from 5
+TORSO_THICKNESS = 5  # Reduced from 6
+
+# Add constants for glow effect
+GLOW_COLOR = (255, 255, 255)  # White glow
+GLOW_THICKNESS = 6  # Reduced from 7
+GLOW_ALPHA = 0.25  # Reduced from 0.3 for subtler glow
 
 def ensure_directory_exists(path):
     """Create directory if it doesn't exist"""
@@ -166,50 +211,84 @@ def calculate_angle(ax, ay, bx, by, cx, cy):
 
 def draw_pretty_skeleton(frame_bgr, landmarks, width, height):
     """
-    Draws a color-coded skeleton with thicker lines and anti-aliasing.
-    Blue (left), Red (right), Green (center).
+    Draws a professionally styled skeleton with enhanced visual effects:
+    - Varying line thickness for different body parts
+    - Vibrant color scheme optimized for presentations
+    - Subtle glow effect around joints for better visibility
+    - Anti-aliased lines for smooth appearance
     
-    This is the enhanced version from enhanced_tennis_processor.py.
+    Orange/blue (left), Red (right), Teal-green (center).
     """
-    # Center lines
+    # Create a separate layer for the glow effect
+    glow_layer = np.zeros_like(frame_bgr, dtype=np.float32)
+    
+    # Draw glow effect for all connections first
+    for connections in [POSE_CONNECTIONS_CENTER, POSE_CONNECTIONS_LEFT, POSE_CONNECTIONS_RIGHT]:
+        for (lmA, lmB) in connections:
+            if lmA in landmarks and lmB in landmarks:
+                xA, yA = landmarks[lmA]
+                xB, yB = landmarks[lmB]
+                ptA = (int(xA * width), int(yA * height))
+                ptB = (int(xB * width), int(yB * height))
+                cv2.line(glow_layer, ptA, ptB, GLOW_COLOR, thickness=GLOW_THICKNESS, lineType=LINE_TYPE)
+    
+    # Draw torso with thicker lines (center)
     for (lmA, lmB) in POSE_CONNECTIONS_CENTER:
         if lmA in landmarks and lmB in landmarks:
             xA, yA = landmarks[lmA]
             xB, yB = landmarks[lmB]
             ptA = (int(xA * width), int(yA * height))
             ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            cv2.line(frame_bgr, ptA, ptB, COLOR_CENTER, thickness=TORSO_THICKNESS, lineType=LINE_TYPE)
 
-    # Left edges
+    # Left limbs with custom thickness
     for (lmA, lmB) in POSE_CONNECTIONS_LEFT:
         if lmA in landmarks and lmB in landmarks:
             xA, yA = landmarks[lmA]
             xB, yB = landmarks[lmB]
             ptA = (int(xA * width), int(yA * height))
             ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            
+            # Arm gets standard thickness, leg gets limb thickness
+            thickness = LIMB_THICKNESS if lmA >= 23 else LINE_THICKNESS
+            cv2.line(frame_bgr, ptA, ptB, COLOR_LEFT, thickness=thickness, lineType=LINE_TYPE)
 
-    # Right edges
+    # Right limbs with custom thickness
     for (lmA, lmB) in POSE_CONNECTIONS_RIGHT:
         if lmA in landmarks and lmB in landmarks:
             xA, yA = landmarks[lmA]
             xB, yB = landmarks[lmB]
             ptA = (int(xA * width), int(yA * height))
             ptB = (int(xB * width), int(yB * height))
-            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=LINE_THICKNESS, lineType=LINE_TYPE)
+            
+            # Arm gets standard thickness, leg gets limb thickness
+            thickness = LIMB_THICKNESS if lmA >= 23 else LINE_THICKNESS
+            cv2.line(frame_bgr, ptA, ptB, COLOR_RIGHT, thickness=thickness, lineType=LINE_TYPE)
 
-    # Keypoints
+    # Blend the glow layer with the main frame
+    # Convert frame_bgr to float for blending
+    frame_f32 = frame_bgr.astype(np.float32)
+    # Add the weighted glow
+    frame_f32 = cv2.addWeighted(frame_f32, 1.0, glow_layer, GLOW_ALPHA, 0)
+    # Convert back to uint8
+    frame_bgr[:] = np.clip(frame_f32, 0, 255).astype(np.uint8)
+
+    # Keypoints - Draw smaller circles at important joints
     for lm_id, (nx, ny) in landmarks.items():
         px = int(nx * width)
         py = int(ny * height)
-        # color-coded by side
+        
+        # Determine color based on side
         if lm_id in (11,13,15,23,25,27):
             kp_color = COLOR_LEFT
         elif lm_id in (12,14,16,24,26,28):
             kp_color = COLOR_RIGHT
         else:
             kp_color = COLOR_CENTER
-
+            
+        # Draw thinner white outline for better visibility
+        cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS+1, (255, 255, 255), 1, lineType=LINE_TYPE)
+        # Draw filled circle with joint color
         cv2.circle(frame_bgr, (px, py), CIRCLE_RADIUS, kp_color, -1, lineType=LINE_TYPE)
 
 def process_video_with_mediapipe(video_path, output_prefix=None, video_id=None):
@@ -294,6 +373,9 @@ def process_video_with_mediapipe(video_path, output_prefix=None, video_id=None):
     landmarks_dict_list = []
     
     try:
+        # Initialize progress tracking
+        progress_bar = tqdm(total=total_frames, desc="Processing frames", unit="frame")
+        
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -380,14 +462,16 @@ def process_video_with_mediapipe(video_path, output_prefix=None, video_id=None):
             
             # Update progress
             frame_count += 1
-            if frame_count % 30 == 0:  # Update every 30 frames
-                percent = (frame_count / total_frames) * 100
-                print(f"[INFO] Progress: {frame_count}/{total_frames} frames ({percent:.1f}%)")
+            progress_bar.update(1)
+            
     except Exception as e:
         print(f"[ERROR] Error during video processing: {e}")
         import traceback
         traceback.print_exc()
     finally:
+        # Close progress bar
+        progress_bar.close()
+        
         # Release resources
         cap.release()
         skeleton_writer.release()
@@ -572,13 +656,14 @@ def convert_llc_to_valid_json(text):
 
 def load_segments_from_llc(llc_path):
     """
-    Load segments from an LLC file and INVERT them to get stroke segments.
+    Load segments directly from an LLC file created by LosslessCut.
     
-    In LosslessCut, "cutSegments" are the parts to CUT OUT, not keep.
-    We need to invert these to get the parts BETWEEN them, which are the actual strokes.
+    In LosslessCut's format, the "cutSegments" array contains timestamps for
+    sections of the video to KEEP, not remove. Each entry defines a clip
+    we want to extract.
     
     Returns:
-        list of (start_frame, end_frame) tuples for the inverted segments (actual strokes)
+        list of (start_frame, end_frame) tuples for each stroke segment to extract
     """
     if not os.path.exists(llc_path):
         print(f"[ERROR] LLC file not found: {llc_path}")
@@ -601,12 +686,12 @@ def load_segments_from_llc(llc_path):
                 print(f"Cleaned content: {cleaned_content[:100]}...")
                 return []
             
-            # Extract cut segments from JSON data - these are parts to remove
-            cut_segments = []
+            # Extract segments from JSON data - these are the clips to extract
+            segments = []
             
             # Look for cutSegments in the JSON (most likely format)
             if "cutSegments" in data and isinstance(data["cutSegments"], list):
-                print(f"[INFO] Found {len(data['cutSegments'])} cutSegments in LLC file")
+                print(f"[INFO] Found {len(data['cutSegments'])} segments in LLC file")
                 for segment in data["cutSegments"]:
                     if isinstance(segment, dict):
                         # Handle time in seconds (convert to frames)
@@ -615,10 +700,10 @@ def load_segments_from_llc(llc_path):
                             end_time = float(segment["end"])
                             start_frame = int(start_time * FPS)
                             end_frame = int(end_time * FPS)
-                            cut_segments.append((start_frame, end_frame))
+                            segments.append((start_frame, end_frame))
             
-            # If no cut segments found, look for other formats
-            if not cut_segments:
+            # If no segments found, look for other formats
+            if not segments:
                 # Look for segments directly in the JSON
                 for key in ["segments", "cuts", "strokes"]:
                     if key in data and isinstance(data[key], list):
@@ -627,44 +712,24 @@ def load_segments_from_llc(llc_path):
                                 start_frame = segment.get("start", 0)
                                 end_frame = segment.get("end", 0)
                                 if start_frame < end_frame:
-                                    cut_segments.append((int(start_frame), int(end_frame)))
+                                    segments.append((int(start_frame), int(end_frame)))
             
-            if not cut_segments:
-                print(f"[WARN] No cut segments found in JSON LLC file: {llc_path}")
+            if not segments:
+                print(f"[WARN] No segments found in JSON LLC file: {llc_path}")
                 return []
             
-            # INVERT the segments to get the parts BETWEEN the cut segments
-            # These are the actual stroke segments we want to keep
+            # Sort segments by start time
+            segments.sort(key=lambda x: x[0])
             
-            # Sort cut segments by start time
-            cut_segments.sort(key=lambda x: x[0])
-            
-            # Determine video duration (approximate from last segment or use a large value)
-            video_duration_frames = cut_segments[-1][1] + 300  # Add buffer frames
-            
-            # Create stroke segments from spaces between cut segments
-            stroke_segments = []
-            prev_end = 0
-            
-            for start, end in cut_segments:
-                if start > prev_end:
-                    # This is a part to keep (between cuts)
-                    stroke_segments.append((prev_end, start - 1))
-                prev_end = end + 1
-            
-            # Add final segment if needed
-            if prev_end < video_duration_frames:
-                stroke_segments.append((prev_end, video_duration_frames))
-            
-            print(f"[INFO] Inverted {len(cut_segments)} cut segments into {len(stroke_segments)} stroke segments")
-            return stroke_segments
+            print(f"[INFO] Found {len(segments)} stroke segments in LLC file")
+            return segments
             
         except Exception as e:
             print(f"[ERROR] Failed to process LLC file: {e}")
             return []
     else:
         # Assume simple text format with one segment per line
-        # For text format, assume these are already stroke segments, not cuts
+        # For text format, these are directly stroke segments
         segments = []
         lines = llc_content.split("\n")
         for line in lines:
@@ -890,12 +955,16 @@ def extract_clip_csv(csv_path, segments, output_folder):
         # Load CSV
         df = pd.read_csv(csv_path)
         
+        # Initialize progress tracking
+        progress_bar = tqdm(total=len(segments), desc="Extracting CSVs", unit="clip")
+        
         for i, (start_frame, end_frame) in enumerate(segments):
             clip_csv_path = os.path.join(output_folder, f"stroke_{i+1}.csv")
             
             # Skip if CSV already exists
             if os.path.exists(clip_csv_path):
                 print(f"[INFO] Clip CSV already exists: {clip_csv_path}")
+                progress_bar.update(1)
                 continue
             
             # Extract frames for this segment
@@ -907,7 +976,11 @@ def extract_clip_csv(csv_path, segments, output_folder):
             # Save clip CSV
             clip_df.to_csv(clip_csv_path, index=False)
             
-            print(f"[INFO] Created clip CSV {i+1}: {clip_csv_path}")
+            # Update progress bar
+            progress_bar.update(1)
+        
+        # Close progress bar
+        progress_bar.close()
         
         return True
     except Exception as e:
@@ -949,6 +1022,14 @@ def time_normalize_csv(csv_path, output_path, num_frames=RESAMPLED_FRAMES):
         
         # Interpolate each column except frame_index and stroke_label
         exclude_cols = ['frame_index', 'stroke_label']
+        
+        # Initialize progress tracking for columns
+        progress_bar = tqdm(
+            total=len(df.columns) - len(exclude_cols), 
+            desc="Normalizing CSV", 
+            unit="column"
+        )
+        
         for col in df.columns:
             if col in exclude_cols:
                 continue
@@ -964,6 +1045,12 @@ def time_normalize_csv(csv_path, output_path, num_frames=RESAMPLED_FRAMES):
             
             # Apply interpolation
             new_df[col] = interp_func(new_frames)
+            
+            # Update progress bar
+            progress_bar.update(1)
+        
+        # Close progress bar
+        progress_bar.close()
         
         # Copy stroke_label (if it exists)
         if 'stroke_label' in df.columns:
@@ -1044,9 +1131,9 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
     """
     Run stroke segmentation on a video to create individual stroke clips.
     
-    In LosslessCut, the "cutSegments" define parts to cut out (non-strokes).
-    This function extracts the parts BETWEEN those cut segments, which are
-    the actual tennis strokes we want to keep and analyze.
+    This function extracts clips from the video based on the segments defined 
+    in the LLC file. In LosslessCut, each entry in "cutSegments" represents 
+    a section of video to KEEP (not remove).
     
     Args:
         video_path (str): Path to the video file
@@ -1084,13 +1171,11 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
             print(f"[ERROR] LLC file not found: {llc_path}")
             return False
         
-        # Step 1: Load segments directly from LLC file
+        # Step 1: Load segments directly from LLC file - these define the clips to extract
         segments = load_segments_from_llc(llc_path)
         if not segments:
             print(f"[ERROR] No segments found in LLC file: {llc_path}")
             return False
-        
-        print(f"[INFO] Found {len(segments)} segments in LLC file")
         
         # Step 2: Create video clips for each segment (all video types)
         # Get video fps
@@ -1107,20 +1192,14 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
         has_skeleton = os.path.exists(skeleton_video)
         has_overlay = os.path.exists(overlay_video)
         
-        print(f"[INFO] Processing {len(segments)} segments from main video: {os.path.basename(main_video)}")
-        if has_skeleton:
-            print(f"[INFO] Skeleton video found: {os.path.basename(skeleton_video)}")
-        if has_overlay:
-            print(f"[INFO] Overlay video found: {os.path.basename(overlay_video)}")
+        print(f"[INFO] Processing {len(segments)} segments")
         
-        # Process each segment
+        # Process each segment - extract clips using start/end times
         for i, (start_frame, end_frame) in enumerate(segments):
             segment_num = i + 1
             start_time = start_frame / fps
             end_time = end_frame / fps
             duration = end_time - start_time
-            
-            print(f"[INFO] Processing segment {segment_num}: {start_time:.2f}s to {end_time:.2f}s")
             
             # Define output files
             main_output = os.path.join(clips_folder, f"stroke_{segment_num}.mp4")
@@ -1128,9 +1207,20 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
             overlay_output = os.path.join(clips_folder, f"stroke_{segment_num}_overlay.mp4")
             
             # Skip existing files unless forced to reprocess
+            all_exist = (
+                os.path.exists(main_output) and 
+                (not has_skeleton or os.path.exists(skeleton_output)) and
+                (not has_overlay or os.path.exists(overlay_output))
+            )
+            
+            if all_exist:
+                continue  # Skip this segment, all files exist already
+            
+            print(f"[INFO] Processing segment {segment_num} ({start_time:.2f}s to {end_time:.2f}s)")
+            
+            # Clip main video
             if not os.path.exists(main_output):
                 try:
-                    # Clip main video
                     cmd = [
                         "ffmpeg", "-y", "-i", main_video, 
                         "-ss", str(start_time), "-t", str(duration),
@@ -1138,7 +1228,6 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
                         main_output
                     ]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"[INFO] Created main clip: {os.path.basename(main_output)}")
                 except Exception as e:
                     print(f"[ERROR] Failed to clip main video: {e}")
             
@@ -1152,7 +1241,6 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
                         skeleton_output
                     ]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"[INFO] Created skeleton clip: {os.path.basename(skeleton_output)}")
                 except Exception as e:
                     print(f"[ERROR] Failed to clip skeleton video: {e}")
             
@@ -1166,7 +1254,6 @@ def run_stroke_segmentation(video_path=None, folder_mode=False):
                         overlay_output
                     ]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"[INFO] Created overlay clip: {os.path.basename(overlay_output)}")
                 except Exception as e:
                     print(f"[ERROR] Failed to clip overlay video: {e}")
         
@@ -1305,7 +1392,9 @@ def manually_copy_clips_to_library(video_id):
     
     created_strokes = []
     
-    # Copy each stroke to the Strokes Library
+    # Copy each stroke to the Strokes Library with progress bar
+    progress_bar = tqdm(total=len(strokes), desc="Copying strokes to library", unit="stroke")
+    
     for stroke_num, files in strokes.items():
         stroke_id = next_stroke_id
         next_stroke_id += 1
@@ -1315,9 +1404,8 @@ def manually_copy_clips_to_library(video_id):
             os.makedirs(stroke_folder, exist_ok=True)
         except Exception as e:
             print(f"[ERROR] Failed to create stroke folder: {e}")
+            progress_bar.update(1)
             continue
-        
-        print(f"[INFO] Creating stroke_{stroke_id} in Strokes Library")
         
         # Track if we successfully created this stroke
         success = False
@@ -1329,13 +1417,7 @@ def manually_copy_clips_to_library(video_id):
             if os.path.exists(src_file):
                 try:
                     shutil.copy2(src_file, dest_file)
-                    print(f"[INFO] Copied main video clip")
                     success = True
-                    
-                    # Also create a "raw" version
-                    raw_file = os.path.join(stroke_folder, "stroke_raw.mp4")
-                    shutil.copy2(src_file, raw_file)
-                    print(f"[INFO] Created raw video reference")
                 except Exception as e:
                     print(f"[ERROR] Failed to copy main clip: {e}")
         
@@ -1346,7 +1428,6 @@ def manually_copy_clips_to_library(video_id):
             if os.path.exists(src_file):
                 try:
                     shutil.copy2(src_file, dest_file)
-                    print(f"[INFO] Copied skeleton video clip")
                 except Exception as e:
                     print(f"[ERROR] Failed to copy skeleton clip: {e}")
         
@@ -1357,7 +1438,6 @@ def manually_copy_clips_to_library(video_id):
             if os.path.exists(src_file):
                 try:
                     shutil.copy2(src_file, dest_file)
-                    print(f"[INFO] Copied overlay video clip")
                 except Exception as e:
                     print(f"[ERROR] Failed to copy overlay clip: {e}")
             
@@ -1366,7 +1446,6 @@ def manually_copy_clips_to_library(video_id):
             dest_file = os.path.join(stroke_folder, "stroke_norm.csv")
             try:
                 shutil.copy2(video_norm_csv, dest_file)
-                print(f"[INFO] Added normalized pose data")
             except Exception as e:
                 print(f"[ERROR] Failed to copy normalized data: {e}")
         
@@ -1383,6 +1462,12 @@ def manually_copy_clips_to_library(video_id):
         
         if success:
             created_strokes.append(f"stroke_{stroke_id}")
+        
+        # Update progress bar
+        progress_bar.update(1)
+    
+    # Close progress bar
+    progress_bar.close()
     
     print(f"[DONE] Created {len(created_strokes)} strokes in the Strokes Library")
     return created_strokes
