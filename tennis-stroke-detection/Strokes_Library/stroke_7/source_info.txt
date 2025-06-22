@@ -1,4 +1,0 @@
-Source Video: video_4
-Stroke Number in Video: 7
-Created by merged_tennis_processor.py
-Created: 2025-04-19 11:01:17
