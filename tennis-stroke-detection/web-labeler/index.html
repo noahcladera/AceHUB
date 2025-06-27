@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- ensure mobile uses its real width -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tennis Stroke Similarity Labeler</title>
+  <style>
+    body { 
+      font-family: sans-serif; 
+      max-width: 800px; 
+      margin: auto; 
+      padding: 1em;
+    }
+    /* coach ID banner */
+    #coachBanner {
+      display: none;            /* shown after prompt */
+      margin-bottom: 1em;
+      padding: 0.5em 1em;
+      background: #eef;
+      border: 1px solid #99c;
+      border-radius: 4px;
+      text-align: center;
+      font-weight: bold;
+    }
+    #instructions {
+      margin-bottom: 1.5em;
+      padding: 1em;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #f9f9f9;
+    }
+    #instructions ol,
+    #instructions ul {
+      margin: 0.5em 0;
+      padding-left: 1.2em;
+    }
+    #instructions ul {
+      list-style: none;
+      padding-left: 0;
+    }
+    #instructions li ul li {
+      margin: 0.3em 0;
+    }
+    #videoContainer { 
+      display: flex; 
+      justify-content: space-between; 
+      margin-bottom: 1em; 
+    }
+    .video-block {
+      text-align: center;
+    }
+    .video-block video { 
+      background: #000; 
+      width: 360px; 
+      height: 240px;
+    }
+    .play-toggle {
+      display: inline-block;
+      margin-top: 0.5em;
+      font-size: 1em;
+      padding: 0.3em 0.6em;
+      border: none;
+      border-radius: 4px;
+      background: #444;
+      color: #fff;
+      cursor: pointer;
+    }
+    #buttonsContainer { 
+      text-align: center; 
+      margin-bottom: 1em; 
+    }
+    #buttonsContainer button {
+      font-size: 1.2em;
+      margin: 0 0.5em;
+      padding: 0.5em 1em;
+      transition: all 0.2s ease;
+    }
+
+    /* Mobile tweaks for narrow viewports */
+    @media (max-width: 480px) {
+      #videoContainer { 
+        flex-direction: column; 
+        align-items: center;
+      }
+      .video-block video {
+        width: 100%;
+        height: auto;
+        max-width: 360px;
+        margin-bottom: 0.5em;
+      }
+      /* bigger play-toggle buttons */
+      .play-toggle {
+        font-size: 1.2em;
+        padding: 0.6em 1em;
+      }
+      /* larger, thumb-friendly YES/MAYBE/NO buttons */
+      #buttonsContainer button {
+        font-size: 1.8em;
+        padding: 1em 1.5em;
+        margin: 0.75em;
+        min-width: 80px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- coach ID banner -->
+  <div id="coachBanner">
+    Coach ID: <span id="coachIdDisplay"></span>
+  </div>
+
+  <div id="instructions">
+    <strong>Instructions:</strong><br>
+    For each pair of clips below, please:
+    <ol>
+      <li>Watch the <em>first video</em> (above on mobile, on the left on desktop) to see a single tennis stroke.</li>
+      <li>Watch the <em>second video</em> (below on mobile, on the right on desktop), which our system has <strong>recommended</strong> as showing a similar stroke.</li>
+      <li>Evaluate whether this recommendation is appropriate for the first video, then click:</li>
+      <ul>
+        <li>✅ <strong>YES</strong> – Highly appropriate recommendation</li>
+        <li>❓ <strong>MAYBE</strong> – Somewhat appropriate but not perfect</li>
+        <li>❌ <strong>NO</strong> – Not an appropriate recommendation</li>
+      </ul>
+    </ol>
+    <em>Your honest feedback improves our recommendation algorithm. There are no right or wrong answers.</em>
+  </div>
+
+  <h1>Is the recommended video appropriate for the base video?</h1>
+
+  <div id="videoContainer">
+    <div class="video-block">
+      <h2>First Video</h2>
+      <video
+        id="queryVideo"
+        autoplay muted
+        playsinline webkit-playsinline
+      ></video>
+      <button class="play-toggle" data-target="queryVideo">⏯️ Play/Pause</button>
+    </div>
+    <div class="video-block">
+      <h2>Second (Recommended) Video</h2>
+      <video
+        id="neighbourVideo"
+        autoplay muted
+        playsinline webkit-playsinline
+      ></video>
+      <button class="play-toggle" data-target="neighbourVideo">⏯️ Play/Pause</button>
+    </div>
+  </div>
+
+  <div id="buttonsContainer">
+    <button id="yesBtn">✅ YES</button>
+    <button id="maybeBtn">❓ MAYBE</button>
+    <button id="noBtn">❌ NO</button>
+  </div>
+
+  <!-- inline play/pause toggles -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.play-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const vid = document.getElementById(btn.dataset.target);
+          vid.paused ? vid.play() : vid.pause();
+        });
+      });
+    });
+  </script>
+
+  <!-- prompt for coach ID FIRST -->
+  <script>
+    let coachId = '';
+    while (!coachId) {
+      coachId = (prompt('Please enter your initials or Coach ID:') || '').trim();
+    }
+    window.COACH_ID = coachId;
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('coachIdDisplay').textContent = coachId;
+      document.getElementById('coachBanner').style.display = 'block';
+    });
+  </script>
+
+  <!-- THEN load your main application logic -->
+  <script src="main.js"></script>
+</body>
+</html>

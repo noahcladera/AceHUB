@@ -1,0 +1,23 @@
+(.venv) noah@Mac AceHUB % /Users/noah/Documents/AceHUB/.venv/bin/python /Users/noah/Documents/AceHUB/tennis-stroke-de
+tection/Thesis/normalization/Hip-centered/eval_hip_simple.py
+Queries evaluated :   99
+precision@5      : 0.539
+nDCG@5           : 0.763
+
+(.venv) noah@Mac AceHUB % /Users/noah/Documents/AceHUB/.venv/bin/python /Users/noah/Documents/AceHUB/tennis-stroke-de
+tection/Thesis/normalization/Procrustes/eval_procrustes_simple.py
+Queries evaluated :   99
+precision@5      : 0.574
+nDCG@5           : 0.788
+
+(.venv) noah@Mac AceHUB % /Users/noah/Documents/AceHUB/.venv/bin/python /Users/noah/Documents/AceHUB/tennis-stroke-de
+tection/Thesis/normalization/Shoulder-centroid/eval_shoulder_simple.py
+Queries evaluated :   99
+precision@5      : 0.574
+nDCG@5           : 0.748
+
+(.venv) noah@Mac AceHUB % /Users/noah/Documents/AceHUB/.venv/bin/python /Users/noah/Documents/AceHUB/tennis-stroke-de
+tection/Thesis/normalization/Torso-centroid/eval_torso_simple.py
+Queries evaluated :   99
+precision@5      : 0.554
+nDCG@5           : 0.769

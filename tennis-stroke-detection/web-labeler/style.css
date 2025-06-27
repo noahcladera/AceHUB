@@ -1,0 +1,4 @@
+body { font-family: sans-serif; margin: 1rem 2rem; }
+#neighList { display: flex; flex-wrap: wrap; gap: 1rem; }
+.card { border: 1px solid #ccc; padding: .5rem; width: 320px; }
+button { margin: .25rem .5rem; }
